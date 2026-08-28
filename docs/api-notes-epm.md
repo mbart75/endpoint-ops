@@ -111,6 +111,15 @@ EPM documentation confirms only SHA-1 for event and raw-file hash fields:
 
 A download URL is not guaranteed for every event. Treat it as optional and do not reject an event because it has no URL. `sourceType` is a useful provenance discriminator, but event values and raw-file-instance values differ; normalise them explicitly rather than assuming a common enumeration. Email and removable-media origins warrant the same review attention as downloaded binaries.
 
+The SHA-1-only EPM event contract constrains complementary reputation coverage:
+
+- A provider that does not accept SHA-1 cannot cover EPM events directly.
+- ThreatFox is queried only when a VirusTotal match supplies the file's SHA-256.
+- That pivot does not close the blind spot when VirusTotal does not know the EPM SHA-1.
+- MalwareBazaar remains the complementary service for that blind spot because it accepts SHA-1.
+
+These consequences follow from the public field documentation and the local mock contract; they do not claim that a real tenant confirmed every field shape.
+
 ## 9. Items not confirmed by public documentation
 
 | Question | Status |

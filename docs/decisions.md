@@ -63,6 +63,14 @@ This document records implementation trade-offs, rationale, and known costs. It 
 45. **No file upload exists.** The module has no file-submission code path. Hash and reversible URL-identifier disclosure still make enrichment opt-in.
 46. **Quota accounting is process-local.** The counter enforces session pacing but does not survive a new session or track another process.
 
+### Multi-source and cache decisions
+
+- **Complementary sources add evidence, not votes.** Provider silence has source-specific meaning; there is no average or majority score. Any malicious evidence makes the aggregate malicious, while clean, unknown, or failed responses can never authorize software or promote a proposal.
+- **The cascade includes VirusTotal-unknown and VirusTotal-unavailable states.** MalwareBazaar may know a recent malicious sample that VirusTotal does not, and a VirusTotal outage must not hide independent evidence.
+- **ThreatFox is a SHA-256 deepening step, not SHA-1 coverage.** It runs only with a valid VirusTotal-derived SHA-256 and cannot address a VirusTotal-unknown EPM SHA-1 by itself.
+- **Persistent caching is opt-in software-inventory storage.** It stores only hash, source, verdict, and query date, never keys. `Clean` and `Unknown` expire after 7 days, `Malicious` after 90 days, and `Unavailable` is never cached.
+- **Cached malicious evidence is monotonic.** Any fresh malicious entry is decisive even if another fresh entry is clean or the original EPM lookup key differs from a VirusTotal-derived SHA-256. Cache completeness must not require every source to be stored under one hash.
+
 ## Device Control and retention
 
 47. **Retention is a required input.** SentinelOne retention varies by tenant and SKU. Assuming it would convert purged events into false evidence of non-use.

@@ -5,14 +5,19 @@
     Author               = 'Maxence Barthelemy'
     CompanyName          = 'Maxence Barthelemy'
     Copyright            = '(c) 2026 Maxence Barthelemy. Licensed under the MIT License.'
-    Description          = 'Automation toolkit for SentinelOne, CyberArk EPM and VirusTotal endpoint operations.'
+    Description          = 'Automation toolkit for SentinelOne, CyberArk EPM, and multi-source file-reputation endpoint operations.'
     PowerShellVersion    = '7.2'
     CompatiblePSEditions = @('Core')
     FunctionsToExport    = @(
+        'Clear-ReputationCache',
         'Connect-EpmTenant',
+        'Connect-HybridAnalysis',
+        'Connect-MalwareBazaar',
         'Connect-S1Tenant',
         'Connect-VirusTotal',
         'Disconnect-EpmTenant',
+        'Disconnect-HybridAnalysis',
+        'Disconnect-MalwareBazaar',
         'Disconnect-S1Tenant',
         'Disconnect-VirusTotal',
         'Get-EndpointOpsVersion',
@@ -22,6 +27,7 @@
         'Get-EpmPolicyDetail',
         'Get-EpmPolicyHygieneReport',
         'Get-EpmSet',
+        'Get-FileReputation',
         'Get-S1Agent',
         'Get-S1DeviceControlEvent',
         'Get-S1DeviceControlRiskReport',

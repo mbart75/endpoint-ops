@@ -51,10 +51,10 @@ function Get-EpmElevationSummary {
         'Binary' (default) groups events by publisher and hash to produce policy proposals. 'User'
         ranks users by request count, exposing trends that are difficult to see in individual events.
     .PARAMETER IncludeReputation
-        Enriches binary groupings with the VirusTotal reputation. The reputation can remove a
+        Enriches binary groupings with per-source reputation evidence. Reputation can remove a
         proposal, never promote it.
     .PARAMETER MinIntervalMs
-        Minimum interval passed to VirusTotal calls.
+        Minimum interval forwarded to reputation calls.
     .EXAMPLE
         Get-EpmElevationSummary -SetId $setRecord.Id -Since (Get-Date).AddDays(-30) |
             Format-Table Publisher, FileName, DistinctUserCount, ProposalLevel
@@ -79,8 +79,8 @@ function Get-EpmElevationSummary {
         throw 'EndpointOps: -IncludeReputation requires -GroupBy Binary; the User grouping does not carry any reputation.'
     }
 
-    # Validate the VirusTotal connection before querying EPM so an unavailable enrichment service
-    # cannot produce a partial report.
+    # VirusTotal is the mandatory first stage, so validate it before querying EPM. Other providers
+    # are optional and contribute Unavailable evidence when disconnected.
     if ($IncludeReputation) {
         $null = Get-VtConnectionState
     }
@@ -243,44 +243,35 @@ function Get-EpmElevationSummary {
         $reputation = $null
         if ($IncludeReputation) {
             try {
-                $reputation = Get-VtFileReport -Hash $group.Hash -MinIntervalMs $MinIntervalMs
+                $reputation = Get-FileReputation -Hash $group.Hash -MinIntervalMs $MinIntervalMs
             }
             catch {
                 # Enrichment failure must not fail the EPM report. The detail retains the expected
                 # public shape.
                 $reputation = [pscustomobject]@{
-                    PSTypeName       = 'EndpointOps.VirusTotal.FileReport'
-                    Hash             = $group.Hash
-                    Verdict          = 'Unavailable'
-                    MaliciousCount   = $null
-                    TotalEngines     = $null
-                    LastAnalysisDate = $null
-                    Permalink        = $null
-                    Sha1             = $null
-                    Sha256           = $null
-                    Md5               = $null
+                    PSTypeName = 'EndpointOps.Reputation.FileResult'
+                    Hash       = $group.Hash
+                    Verdict    = 'Unavailable'
+                    Sources    = @()
                 }
             }
 
             if ($reputation.Verdict -eq 'Malicious') {
                 $riskLevel = 'None'
-                $engines = if ($null -ne $reputation.MaliciousCount) {
-                    $reputation.MaliciousCount
-                }
-                else {
-                    0
-                }
+                $maliciousSources = @($reputation.Sources | Where-Object Verdict -eq 'Malicious')
+                $sourceNames = @($maliciousSources | ForEach-Object Source)
+                $sources = if ($sourceNames.Count -gt 0) { $sourceNames -join ', ' } else { 'a reputation source' }
 
                 if ($signed) {
-                    $reason = "Signed binary '$($group.Publisher)': $displayName, flagged by $engines engines. " +
+                    $reason = "Signed binary '$($group.Publisher)': $displayName, flagged by $sources. " +
                              'No rule is proposed: reputation downgraded the proposal and can never grant authorization.'
                 }
                 else {
-                    $reason += "Malicious reputation: reported by $engines engines."
+                    $reason += "Malicious reputation: reported by $sources."
                 }
             }
             elseif ($reputation.Verdict -eq 'Clean') {
-                $reason += 'Clean reputation: no engine reports it today; this finding does not promote the proposal.'
+                $reason += 'Clean reputation: no VirusTotal engine reports it today; this finding does not promote the proposal.'
             }
             elseif ($reputation.Verdict -eq 'Unknown') {
                 $reason += 'Unknown reputation: no data available; the level remains unchanged.'

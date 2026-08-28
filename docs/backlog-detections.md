@@ -22,7 +22,11 @@ Only Stage 1 is implemented as a write operation, and it is gated by `ShouldProc
 
 Aggregate elevation events by publisher and file hash, then propose policy treatment from explainable inputs such as signature state and distinct-user count. An unsigned binary remains a weak or no proposal regardless of frequency: prevalence measures distribution, not legitimacy.
 
-Optional VirusTotal enrichment can reject or weaken a proposal. It cannot promote one. EPM reports state `Contact` as unavailable through the API when public API data cannot identify a policy author.
+### W2.2 — multi-source reputation enrichment
+
+Optional `Get-FileReputation` enrichment starts with the EPM SHA-1 in VirusTotal, consults MalwareBazaar after a malicious, unknown, or unavailable VirusTotal result, and reaches Hybrid Analysis plus ThreatFox only after malicious evidence; ThreatFox additionally requires the SHA-256 pivot returned by VirusTotal. Reputation may reject or weaken a proposal, never promote it, and provider failure does not prevent the EPM grouping from being returned.
+
+EPM reports state `Contact` as unavailable through the API when public API data cannot identify a policy author.
 
 ## W3 — SentinelOne exclusion review
 

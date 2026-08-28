@@ -162,9 +162,16 @@ function Start-MockApiServer {
                                     last_analysis_stats = @{ malicious = 1; harmless = 68; undetected = 5 }
                                 } } }
                             }
+                            { $_ -ieq (('E' * 38) + '05') } { Send-Json $context @{ error = @{ code = 'NotFoundError' } } 404 }
                             { $_ -ieq (('F' * 38) + '06') } { Send-Json $context @{ error = @{ code = 'QuotaExceededError' } } 429 }
                             { $_ -ieq (('0' * 38) + '07') } { Send-Json $context @{ error = @{ code = 'BadRequestError' } } 400 }
                             { $_ -ieq (('1' * 38) + '08') } { Send-Json $context @{ error = @{ code = 'InternalServerError' } } 500 }
+                            { $_ -ieq (('2' * 38) + '09') } {
+                                Send-Json $context @{ data = @{ attributes = @{
+                                    md5 = (('2' * 30) + '09'); sha1 = $hash; sha256 = (('2' * 62) + '09')
+                                    last_analysis_stats = @{ malicious = 9; harmless = 38 }
+                                } } }
+                            }
                             default { Send-Json $context @{ error = @{ code = 'NotFoundError' } } 404 }
                         }
                         continue
@@ -196,6 +203,302 @@ function Start-MockApiServer {
                         }
                         continue
                     }
+                }
+
+                # MalwareBazaar uses a distinct path and Auth-Key header. Route matching is
+                # case-insensitive, while the mock key comparison is strict and case-sensitive.
+                $isMbRoute = [string]::Equals($path, '/mb/api/v1/', [StringComparison]::OrdinalIgnoreCase)
+                if ($isMbRoute) {
+                    $mbApiKey = $context.Request.Headers['Auth-Key']
+                    $reputationRequests.Add(@{
+                        path      = $path
+                        method    = $context.Request.HttpMethod
+                        authExact = ($mbApiKey -ceq 'MOCK-MB-KEY')
+                    })
+
+                    if (-not ($mbApiKey -ceq 'MOCK-MB-KEY')) {
+                        Send-Json $context @{ query_status = 'unauthorized' } 401
+                        continue
+                    }
+
+                    $mbContentType = [string]$context.Request.ContentType
+                    if (-not $mbContentType.StartsWith(
+                            'application/x-www-form-urlencoded',
+                            [StringComparison]::OrdinalIgnoreCase)) {
+                        Send-Json $context @{ query_status = 'invalid_request' } 400
+                        continue
+                    }
+
+                    $mbRawBody = ''
+                    if ($context.Request.HasEntityBody) {
+                        $mbReader = [System.IO.StreamReader]::new(
+                            $context.Request.InputStream,
+                            [System.Text.Encoding]::UTF8)
+                        try { $mbRawBody = $mbReader.ReadToEnd() }
+                        finally { $mbReader.Dispose() }
+                    }
+
+                    $mbForm = @{}
+                    $mbFormInvalid = $false
+                    foreach ($mbPart in @($mbRawBody -split '&')) {
+                        if ([string]::IsNullOrEmpty($mbPart)) { continue }
+
+                        $mbSeparator = $mbPart.IndexOf('=')
+                        if ($mbSeparator -lt 1) {
+                            $mbFormInvalid = $true
+                            break
+                        }
+
+                        try {
+                            $mbName = [uri]::UnescapeDataString(
+                                $mbPart.Substring(0, $mbSeparator).Replace('+', ' '))
+                            $mbValue = [uri]::UnescapeDataString(
+                                $mbPart.Substring($mbSeparator + 1).Replace('+', ' '))
+                            $mbForm[$mbName] = $mbValue
+                        }
+                        catch {
+                            $mbFormInvalid = $true
+                            break
+                        }
+                    }
+
+                    if ($mbFormInvalid -or
+                        $mbForm['query'] -ne 'get_info' -or
+                        [string]::IsNullOrEmpty([string]$mbForm['hash'])) {
+                        Send-Json $context @{ query_status = 'invalid_request' } 400
+                        continue
+                    }
+
+                    $mbHash = [string]$mbForm['hash']
+                    switch -Regex ($mbHash) {
+                        ('^' + ('B' * 38) + '02$') {
+                            Send-Json $context @{ query_status = 'ok'; data = @(@{
+                                sha1 = $mbHash
+                                sha256 = (('B' * 62) + '02')
+                                md5 = (('B' * 30) + '02')
+                                signature = 'AgentTesla'
+                            }) }
+                        }
+                        ('^' + ('C' * 38) + '03$') {
+                            Send-Json $context @{ query_status = 'ok'; data = @(@{
+                                sha1 = $mbHash
+                                sha256 = (('C' * 62) + '03')
+                                md5 = (('C' * 30) + '03')
+                                signature = 'AgentTesla'
+                            }) }
+                        }
+                        ('^' + ('2' * 38) + '09$') {
+                            Send-Json $context @{ query_status = 'hash_not_found' }
+                        }
+                        ('^' + ('E' * 38) + '05$') {
+                            Send-Json $context @{ query_status = 'hash_not_found' }
+                        }
+                        ('^' + ('F' * 38) + '06$') {
+                            Send-Json $context @{ query_status = 'server_error' } 500
+                        }
+                        default {
+                            Send-Json $context @{ query_status = 'hash_not_found' }
+                        }
+                    }
+                    continue
+                }
+
+                # ThreatFox shares the abuse.ch Auth-Key with MalwareBazaar but uses a distinct
+                # production host. The /tf prefix represents that host and keeps request counts
+                # unambiguous in the local mock.
+                $isTfRoute = [string]::Equals($path, '/tf/api/v1/', [StringComparison]::OrdinalIgnoreCase)
+                if ($isTfRoute) {
+                    $tfApiKey = $context.Request.Headers['Auth-Key']
+                    $reputationRequests.Add(@{
+                        path      = $path
+                        method    = $context.Request.HttpMethod
+                        authExact = ($tfApiKey -ceq 'MOCK-MB-KEY')
+                    })
+
+                    if (-not ($tfApiKey -ceq 'MOCK-MB-KEY')) {
+                        Send-Json $context @{ query_status = 'unauthorized' } 401
+                        continue
+                    }
+
+                    if ($context.Request.HttpMethod -cne 'POST') {
+                        Send-Json $context @{ query_status = 'method_not_allowed' } 405
+                        continue
+                    }
+
+                    $tfContentType = [string]$context.Request.ContentType
+                    if (-not $tfContentType.StartsWith('application/json', [StringComparison]::OrdinalIgnoreCase)) {
+                        Send-Json $context @{ query_status = 'invalid_request' } 400
+                        continue
+                    }
+
+                    $tfRawBody = ''
+                    if ($context.Request.HasEntityBody) {
+                        $tfReader = [System.IO.StreamReader]::new(
+                            $context.Request.InputStream,
+                            [System.Text.Encoding]::UTF8)
+                        try { $tfRawBody = $tfReader.ReadToEnd() }
+                        finally { $tfReader.Dispose() }
+                    }
+
+                    $tfBody = $null
+                    try {
+                        $tfBody = $tfRawBody | ConvertFrom-Json -ErrorAction Stop
+                    }
+                    catch {
+                        Send-Json $context @{ query_status = 'invalid_request' } 400
+                        continue
+                    }
+
+                    if ($null -eq $tfBody -or
+                        $tfBody.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject] -or
+                        $tfBody.PSObject.Properties.Name -notcontains 'query' -or
+                        $tfBody.PSObject.Properties.Name -notcontains 'hash' -or
+                        [string]$tfBody.query -cne 'search_hash' -or
+                        [string]::IsNullOrWhiteSpace([string]$tfBody.hash)) {
+                        Send-Json $context @{ query_status = 'invalid_request' } 400
+                        continue
+                    }
+
+                    $tfHash = [string]$tfBody.hash
+                    if ($tfHash -notmatch '^(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$') {
+                        Send-Json $context @{ query_status = 'invalid_request' } 400
+                        continue
+                    }
+
+                    if ($tfHash -match '^[0-9A-Fa-f]{40}$') {
+                        Send-Json $context @{ query_status = 'illegal_hash' }
+                        continue
+                    }
+
+                    switch -Regex ($tfHash) {
+                        ('^' + ('C' * 62) + '03$') {
+                            Send-Json $context @{ query_status = 'ok'; data = @(@{
+                                id = '900003'
+                                ioc = 'https://payload.example.invalid/agenttesla.exe'
+                                threat_type = 'payload_delivery'
+                                threat_type_desc = 'Indicator used to deliver a malicious payload'
+                                ioc_type = 'url'
+                                ioc_type_desc = 'URL that delivers a malware payload'
+                                malware = 'win.agenttesla'
+                                malware_printable = 'AgentTesla'
+                                malware_alias = 'Agent Tesla,Negasteal'
+                                malware_malpedia = 'https://malpedia.example.invalid/details/win.agenttesla'
+                                confidence_level = 95
+                                first_seen = '2026-08-24 10:00:00 UTC'
+                                last_seen = '2026-08-25 08:30:00 UTC'
+                                reference = 'https://research.example.invalid/threatfox/900003'
+                                reporter = 'mock-reporter'
+                                tags = @('TA505', 'exe')
+                            }) }
+                        }
+                        ('^' + ('2' * 62) + '09$') {
+                            Send-Json $context @{ query_status = 'ok'; data = @(@{
+                                id = '900009'
+                                ioc = 'https://download.example.invalid/agenttesla.bin'
+                                threat_type = 'payload_delivery'
+                                threat_type_desc = 'Indicator used to deliver a malicious payload'
+                                ioc_type = 'url'
+                                ioc_type_desc = 'URL that delivers a malware payload'
+                                malware = 'win.agenttesla'
+                                malware_printable = 'AgentTesla'
+                                malware_alias = 'Agent Tesla,Negasteal'
+                                malware_malpedia = 'https://malpedia.example.invalid/details/win.agenttesla'
+                                confidence_level = 90
+                                first_seen = '2026-08-23 12:00:00 UTC'
+                                last_seen = '2026-08-25 07:00:00 UTC'
+                                reference = 'https://research.example.invalid/threatfox/900009'
+                                reporter = 'mock-reporter'
+                                tags = @('TA505')
+                            }) }
+                        }
+                        default {
+                            Send-Json $context @{ query_status = 'ok'; data = @() }
+                        }
+                    }
+                    continue
+                }
+
+                # Hybrid Analysis v2 searches by hash with an api-key header. Route matching is
+                # case-insensitive, while the mock key comparison remains strict.
+                $isHaRoute = [string]::Equals(
+                    $path,
+                    '/api/v2/search/hash',
+                    [StringComparison]::OrdinalIgnoreCase)
+                if ($isHaRoute) {
+                    $haApiKey = $context.Request.Headers['api-key']
+                    $reputationRequests.Add(@{
+                        path      = $path
+                        method    = $context.Request.HttpMethod
+                        authExact = ($haApiKey -ceq 'MOCK-HA-KEY')
+                    })
+
+                    if (-not ($haApiKey -ceq 'MOCK-HA-KEY')) {
+                        Send-Json $context @{ message = 'Authentication required' } 401
+                        continue
+                    }
+
+                    if ($context.Request.HttpMethod -cne 'GET') {
+                        Send-Json $context @{ message = 'Method not allowed' } 405
+                        continue
+                    }
+
+                    $haHash = [string]$context.Request.QueryString['hash']
+                    $haQuota = @{ 'Api-Limits' = '{"opaque_mock_quota":"fixture-only-do-not-parse"}' }
+                    switch -Regex ($haHash) {
+                        ('^' + ('B' * 38) + '02$') {
+                            Send-Json $context @{
+                                sha256s = @((('B' * 62) + '02'))
+                                reports = @(@{
+                                    id = 'mock-ha-report-b02'
+                                    environment_id = 160
+                                    environment_description = 'Windows 10 64 bit'
+                                    state = 'SUCCESS'
+                                    error_type = $null
+                                    error_origin = $null
+                                    error = $null
+                                    verdict = 'malicious'
+                                })
+                            } 200 $haQuota
+                        }
+                        ('^' + ('C' * 38) + '03$') {
+                            Send-Json $context @{
+                                sha256s = @((('C' * 62) + '03'))
+                                reports = @(@{
+                                    id = 'mock-ha-report-c03'
+                                    environment_id = 120
+                                    environment_description = 'Windows 7 64 bit'
+                                    state = 'SUCCESS'
+                                    error_type = $null
+                                    error_origin = $null
+                                    error = $null
+                                    verdict = 'malicious'
+                                })
+                            } 200 $haQuota
+                        }
+                        ('^' + ('2' * 38) + '09$') {
+                            Send-Json $context @{
+                                sha256s = @((('2' * 62) + '09'))
+                                reports = @(@{
+                                    id = 'mock-ha-report-209'
+                                    environment_id = 140
+                                    environment_description = 'Windows 11 64 bit'
+                                    state = 'SUCCESS'
+                                    error_type = $null
+                                    error_origin = $null
+                                    error = $null
+                                    verdict = 'malicious'
+                                })
+                            } 200 $haQuota
+                        }
+                        ('^' + ('E' * 38) + '05$') {
+                            # The missing Api-Limits header means the quota is unknown, not exhausted.
+                            Send-Json $context @{ sha256s = @(); reports = @() }
+                        }
+                        default {
+                            Send-Json $context @{ sha256s = @(); reports = @() } 200 $haQuota
+                        }
+                    }
+                    continue
                 }
 
                 # EPM routes have their own guard, distinct from that of SentinelOne: the expected header is not the
