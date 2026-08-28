@@ -1,10 +1,10 @@
 # endpoint-ops
 
-**A PowerShell toolkit for evidence-driven endpoint security reviews.** endpoint-ops turns documented SentinelOne, CyberArk EPM, and VirusTotal API responses into reviewable hygiene, policy, and reputation findings without turning an API client into an autonomous security decision-maker.
+**A PowerShell toolkit for evidence-driven endpoint security reviews.** endpoint-ops turns documented SentinelOne, CyberArk EPM, VirusTotal, MalwareBazaar, Hybrid Analysis, and ThreatFox API responses into reviewable hygiene, policy, and reputation findings without turning an API client into an autonomous security decision-maker.
 
 It is designed for endpoint engineers who prefer auditable command-line workflows to opaque console clicks. Read operations are separated from reporting logic; reports state their reasons in plain text; and the only write workflow is deliberately narrow, protected by PowerShell `ShouldProcess`.
 
-> **Validation boundary:** this repository is implemented from public product documentation and tested only against its local mock HTTP server. It has not been validated against a real tenant, real tenant data, or production credentials.
+> **Validation boundary:** this repository is implemented from public product documentation and tested only against its local mock HTTP server. The SentinelOne, CyberArk EPM, VirusTotal, MalwareBazaar, Hybrid Analysis, and ThreatFox integrations are documentation- and mock-backed contracts, not guarantees of real-service compatibility. No real tenant, provider account, tenant data, or production credential was used.
 
 ## Architecture
 
@@ -18,10 +18,13 @@ Layer 3  Product queries    Get-S1Agent · Get-S1Exclusion · Get-S1DeviceContro
                              Get-S1DeviceControlEvent
                              Get-EpmSet · Get-EpmPolicy · Get-EpmPolicyDetail
                              Get-EpmElevationEvent · Get-VtFileReport · Get-VtUrlReport
+                             Get-FileReputation · Clear-ReputationCache
                                         |
 Layer 2  Connections        Connect-S1Tenant · Disconnect-S1Tenant
                              Connect-EpmTenant · Disconnect-EpmTenant
                              Connect-VirusTotal · Disconnect-VirusTotal
+                             Connect-MalwareBazaar · Disconnect-MalwareBazaar
+                             Connect-HybridAnalysis · Disconnect-HybridAnalysis
                                         |
 Layer 1  Transport          Invoke-EndpointOpsRequest
 ```
@@ -35,11 +38,22 @@ Layer 1  Transport          Invoke-EndpointOpsRequest
 | SentinelOne review workflows | `Get-S1FleetHygieneReport`, `Get-S1ExclusionRiskReport`, `Get-S1DeviceControlRiskReport`, `Get-S1UnusedAuthorizationReport` | Produce explainable findings for endpoint hygiene, broad exclusions, permissive device rules, and unused authorizations. |
 | SentinelOne remediation | `Invoke-S1FleetRemediation` | The module’s only write command. It can only perform stage-one movement to a tracking group and uses `ShouldProcess`. |
 | CyberArk EPM | `Connect-EpmTenant`, `Disconnect-EpmTenant`, `Get-EpmSet`, `Get-EpmPolicy`, `Get-EpmPolicyDetail`, `Get-EpmElevationEvent`, `Get-EpmPolicyHygieneReport`, `Get-EpmElevationSummary` | Query EPM sets, policies, and elevation events, then surface policy-hygiene and elevation proposals. |
-| VirusTotal | `Connect-VirusTotal`, `Disconnect-VirusTotal`, `Get-VtFileReport`, `Get-VtUrlReport` | Optional reputation lookup for hashes and URLs. No file-upload path exists in this module. |
+| Reputation enrichment | `Connect-VirusTotal`, `Disconnect-VirusTotal`, `Get-VtFileReport`, `Get-VtUrlReport`, `Connect-MalwareBazaar`, `Disconnect-MalwareBazaar`, `Connect-HybridAnalysis`, `Disconnect-HybridAnalysis`, `Get-FileReputation`, `Clear-ReputationCache` | Optional hash-only file enrichment with ordered per-source evidence. URL lookup remains VirusTotal-specific. No file upload or automatic authorization exists. |
 
 CyberArk EPM uses a dispatcher model: authentication returns both a session token and `ManagerURL`; subsequent EPM requests use that returned manager URL. EPM list pagination uses offsets, while event pagination uses an opaque cursor.
 
-VirusTotal enrichment is optional and can only weaken or reject an existing EPM proposal. It never authorizes an elevation automatically. The public API rate limit is documented as four requests per minute, so enriching 80 hashes can take about 20 minutes. The output value `Unknown` must never be read as safe.
+File-reputation enrichment always starts with VirusTotal. After a `Malicious`, `Unknown`, or `Unavailable` VirusTotal result, it consults MalwareBazaar. Hybrid Analysis is queried only after the aggregate contains malicious evidence; ThreatFox is queried at that stage only when VirusTotal supplied a valid SHA-256 pivot. Provider silence or absence is never converted to `Clean`. Reputation can only weaken or reject an existing EPM proposal and never authorizes an elevation automatically. The output value `Unknown` must never be read as safe.
+
+## Opt-in reputation cache
+
+Persistent caching is disabled unless `Get-FileReputation` receives `-UseCache`. Its default path is `ApplicationData/EndpointOps/reputation-cache.json` under the current user profile. A custom `-CachePath` should be protected as sensitive local software-inventory data.
+
+The cache stores only the hash, source, verdict, and query date; it never stores API keys. `Clean` and `Unknown` entries expire after 7 days, `Malicious` entries after 90 days, and `Unavailable` results are never cached.
+
+```powershell
+Get-FileReputation -Hash $sha1 -UseCache
+Clear-ReputationCache
+```
 
 ## Quick start
 
@@ -90,7 +104,7 @@ Disconnect-EpmTenant
 - The local mock server requires a token on product routes, while generic transport routes remain unauthenticated to isolate transport tests from authentication tests.
 - `Invoke-S1FleetRemediation` is the only state-changing command. It moves endpoints only to a specified tracking group, uses `SupportsShouldProcess`, sets `ConfirmImpact = 'High'`, and supports `-WhatIf`.
 - `-WhatIf` does not bypass connection validation: a disconnected module fails rather than claiming it would act.
-- VirusTotal requests disclose a hash or a reversible base64url URL identifier to that third party. Enrichment is opt-in and never uploads files.
+- Each reputation provider that is queried learns a file hash. ThreatFox receives the VirusTotal-derived SHA-256 pivot. VirusTotal URL lookups disclose a reversible base64url URL identifier. Enrichment is opt-in and never uploads file contents.
 
 ## Validation and CI
 
@@ -116,10 +130,11 @@ CI runs the following gates:
 
 ## Limitations
 
-- The project has been written against public documentation and a mock server only. No real SentinelOne, CyberArk EPM, or VirusTotal tenant has been used for validation, and the repository contains no tenant data, tokens, or tenant addresses.
+- The project has been written against public documentation and a mock server only. No real SentinelOne or CyberArk EPM tenant and no real VirusTotal, MalwareBazaar, Hybrid Analysis, or ThreatFox account was used for validation. The repository contains no tenant data, tokens, or tenant addresses.
 - Several upstream behaviours remain ambiguous in public documentation, including some EPM field names and pagination endings. The module handles documented alternatives defensively, but a real tenant is required to resolve them.
 - EPM policy details are rate limited to 30 calls per minute and each policy description requires its own detail request. Reviewing 200 policies therefore takes more than seven minutes.
 - The VirusTotal quota counter is in memory and applies only to the current process. It paces that session; it is not an authoritative daily-quota ledger.
+- The tested ThreatFox entry point and absence-status contract are represented by the local mock only and require confirmation against the real service.
 - SentinelOne retention is tenant-dependent. `Get-S1UnusedAuthorizationReport` requires `RetentionDays` rather than assuming a universal retention period.
 
 ## Project structure
@@ -135,4 +150,4 @@ docs/                  API research, detection backlog, and design decisions
 
 ## Technical decisions
 
-The implementation rationale, known trade-offs, and security constraints are documented in [technical decisions](docs/decisions.md). Supporting public-API research is available in [SentinelOne, EPM, and VirusTotal notes](docs/api-notes.md), [EPM API notes](docs/api-notes-epm.md), and [reputation-service notes](docs/api-notes-reputation.md).
+The implementation rationale, known trade-offs, and security constraints are documented in [technical decisions](docs/decisions.md). Supporting research is available in the [general API notes](docs/api-notes.md), [EPM API notes](docs/api-notes-epm.md), and [reputation-service notes](docs/api-notes-reputation.md).

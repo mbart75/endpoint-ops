@@ -18,15 +18,19 @@ BeforeAll {
     $script:HMicrosoft = ('D' * 38) + '04'
     $script:HNorthwind = ('F' * 38) + '06'
     $script:EpmLog = "http://localhost:$($script:Port)/EPM/API/_test/requests"
-    $script:VtLog = "http://localhost:$($script:Port)/_test/reputation"
+    $script:ReputationLog = "http://localhost:$($script:Port)/_test/reputation"
     $script:VtKey = ConvertTo-TestSecureString -PlainText 'MOCK-VT-KEY'
+    $script:MbKey = ConvertTo-TestSecureString -PlainText 'MOCK-MB-KEY'
+    $script:HaKey = ConvertTo-TestSecureString -PlainText 'MOCK-HA-KEY'
+    $script:MbBaseUri = "$($script:Server.BaseUrl)/mb"
+    $script:TfBaseUri = "$($script:Server.BaseUrl)/tf"
 
     function Measure-EpmRequestLog {
         @((Invoke-RestMethod -Uri $script:EpmLog).requests).Count
     }
 
-    function Measure-VtRequestLog {
-        @((Invoke-RestMethod -Uri $script:VtLog).requests).Count
+    function Measure-ReputationRequestLog {
+        @((Invoke-RestMethod -Uri $script:ReputationLog).requests).Count
     }
 
     function Get-GroupedSummary {
@@ -40,6 +44,8 @@ BeforeAll {
 }
 
 AfterAll {
+    Disconnect-HybridAnalysis
+    Disconnect-MalwareBazaar
     Disconnect-VirusTotal
     Disconnect-EpmTenant
     Remove-Module EndpointOps -Force -ErrorAction SilentlyContinue
@@ -48,12 +54,19 @@ AfterAll {
 
 Describe 'Get-EpmElevationSummary with reputation' {
     BeforeEach {
+        Disconnect-HybridAnalysis
+        Disconnect-MalwareBazaar
         Disconnect-VirusTotal
         Connect-VirusTotal -BaseUri $script:Server.BaseUrl -ApiKey $script:VtKey | Out-Null
     }
 
-    It 'Preserves the base contract and does not call VirusTotal without IncludeReputation' {
-        $before = Measure-VtRequestLog
+    AfterEach {
+        Disconnect-HybridAnalysis
+        Disconnect-MalwareBazaar
+    }
+
+    It 'Preserves the base contract and makes no reputation requests without IncludeReputation' {
+        $before = Measure-ReputationRequestLog
         $summary = @(Get-EpmElevationSummary -SetId $script:Production -MinIntervalMs 0)
 
         @($summary).Count | Should -Be 5
@@ -69,20 +82,27 @@ Describe 'Get-EpmElevationSummary with reputation' {
             "$($script:HNorthwind)|Weak",
             "$($script:HUnknown)|None"
         )
-        (Measure-VtRequestLog) | Should -Be $before
+        (Measure-ReputationRequestLog) | Should -Be $before
     }
 
-    It 'Adds Reputation and ReputationDetail to each request grouping' {
-        $summary = @(Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0)
+    It 'Uses per-source reputation evidence and isolates disconnected optional providers' {
+        $group = Get-GroupedSummary -Summary @(
+            Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0
+        ) -Hash $script:HFabrikam
 
-        @($summary | Where-Object {
-                $_.PSObject.Properties.Name -notcontains 'Reputation' -or
-                $_.PSObject.Properties.Name -notcontains 'ReputationDetail' -or
-                $null -eq $_.ReputationDetail
-            }).Count | Should -Be 0
+        $group.Reputation | Should -BeExactly 'Malicious'
+        @($group.ReputationDetail.Sources | ForEach-Object Source) | Should -Be @(
+            'VirusTotal', 'MalwareBazaar', 'HybridAnalysis', 'ThreatFox'
+        )
+        @($group.ReputationDetail.Sources | ForEach-Object Verdict) | Should -Be @(
+            'Malicious', 'Unavailable', 'Unavailable', 'Unavailable'
+        )
     }
 
-    It 'Downgrades a malicious signed binary from Moderate to None with a valid reason' {
+    It 'Downgrades a malicious signed binary and preserves all connected source records' {
+        Connect-MalwareBazaar -BaseUri $script:MbBaseUri -ThreatFoxBaseUri $script:TfBaseUri -AuthKey $script:MbKey | Out-Null
+        Connect-HybridAnalysis -BaseUri $script:Server.BaseUrl -ApiKey $script:HaKey | Out-Null
+
         $group = Get-GroupedSummary -Summary @(
             Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0
         ) -Hash $script:HFabrikam
@@ -91,13 +111,37 @@ Describe 'Get-EpmElevationSummary with reputation' {
         $group.Reputation | Should -BeExactly 'Malicious'
         $group.ProposalLevel | Should -BeExactly 'None'
         $group.ProposalRank | Should -Be 0
-        $group.Rationale | Should -BeLike '*Signed binary*flagged by 8 engines*'
+        @($group.ReputationDetail.Sources | ForEach-Object Source) | Should -Be @(
+            'VirusTotal', 'MalwareBazaar', 'HybridAnalysis', 'ThreatFox'
+        )
         $group.Rationale | Should -Not -BeLike '*UNSIGNED BINARY*'
     }
 
-    It 'Ignores a hostile mutation of the malicious report already cached' {
+    It 'Names VirusTotal when it downgrades a signed-binary proposal' {
+        $group = Get-GroupedSummary -Summary @(
+            Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0
+        ) -Hash $script:HFabrikam
+
+        $group.Rationale | Should -BeLike '*flagged by VirusTotal*'
+        $group.Rationale | Should -BeLike '*reputation downgraded the proposal and can never grant authorization*'
+    }
+
+    It 'Names MalwareBazaar when malicious evidence leaves an unsigned binary at None' {
+        Connect-MalwareBazaar -BaseUri $script:MbBaseUri -ThreatFoxBaseUri $script:TfBaseUri -AuthKey $script:MbKey | Out-Null
+
+        $group = Get-GroupedSummary -Summary @(
+            Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0
+        ) -Hash $script:HUnknown
+
+        $group.IsSigned | Should -BeFalse
+        $group.Reputation | Should -BeExactly 'Malicious'
+        $group.ProposalLevel | Should -BeExactly 'None'
+        $group.Rationale | Should -BeLike '*Malicious reputation*MalwareBazaar*'
+    }
+
+    It 'Ignores a hostile mutation of an exposed VirusTotal report' {
         $path = "/api/v3/files/$($script:HFabrikam)"
-        $logBefore = @((Invoke-RestMethod -Uri $script:VtLog).requests)
+        $logBefore = @((Invoke-RestMethod -Uri $script:ReputationLog).requests)
         $before = @($logBefore | Where-Object path -eq $path).Count
         $exposedReport = Get-VtFileReport -Hash $script:HFabrikam -MinIntervalMs 0
         $exposedReport.Verdict = 'Clean'
@@ -107,11 +151,12 @@ Describe 'Get-EpmElevationSummary with reputation' {
             Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0
         ) -Hash $script:HFabrikam
 
-        $logAfter = @((Invoke-RestMethod -Uri $script:VtLog).requests)
+        $logAfter = @((Invoke-RestMethod -Uri $script:ReputationLog).requests)
         $after = @($logAfter | Where-Object path -eq $path).Count
+        $vtSource = @($group.ReputationDetail.Sources | Where-Object Source -eq 'VirusTotal')[0]
         $group.Reputation | Should -BeExactly 'Malicious'
         $group.ProposalLevel | Should -BeExactly 'None'
-        $group.ReputationDetail.MaliciousCount | Should -Be 8
+        $vtSource.Verdict | Should -BeExactly 'Malicious'
         ($after - $before) | Should -Be 1
     }
 
@@ -122,16 +167,27 @@ Describe 'Get-EpmElevationSummary with reputation' {
 
         $group.Reputation | Should -BeExactly 'Clean'
         $group.ProposalLevel | Should -BeExactly 'Weak'
-        $group.Rationale | Should -BeLike '*no engine*does not promote*'
+        $group.Rationale | Should -BeLike '*no VirusTotal engine reports it today*does not promote*'
     }
 
     It 'Does not change the level for an Unknown verdict' {
         $withoutReputation = Get-GroupedSummary -Summary @(
             Get-EpmElevationSummary -SetId $script:Production
         ) -Hash $script:HUnknown
-        $withReputation = Get-GroupedSummary -Summary @(
-            Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0
-        ) -Hash $script:HUnknown
+        $withReputation = Get-GroupedSummary -Summary @(InModuleScope EndpointOps -Parameters @{
+                Production = $script:Production
+            } {
+                param($Production)
+                Mock Get-FileReputation {
+                    [pscustomobject]@{
+                        PSTypeName = 'EndpointOps.Reputation.FileResult'
+                        Hash       = ('B' * 38) + '02'
+                        Verdict    = 'Unknown'
+                        Sources    = @()
+                    }
+                }
+                Get-EpmElevationSummary -SetId $Production -IncludeReputation -MinIntervalMs 0
+            }) -Hash $script:HUnknown
 
         $withReputation.Reputation | Should -BeExactly 'Unknown'
         $withReputation.ProposalLevel | Should -BeExactly $withoutReputation.ProposalLevel
@@ -151,13 +207,13 @@ Describe 'Get-EpmElevationSummary with reputation' {
     It 'Rejects IncludeReputation with GroupBy User before any connection or query' {
         Disconnect-VirusTotal
         $epmBefore = Measure-EpmRequestLog
-        $vtBefore = Measure-VtRequestLog
+        $reputationBefore = Measure-ReputationRequestLog
 
         try {
             { Get-EpmElevationSummary -SetId $script:Production -GroupBy User -IncludeReputation } |
                 Should -Throw '*IncludeReputation requires -GroupBy Binary*'
             (Measure-EpmRequestLog) | Should -Be $epmBefore
-            (Measure-VtRequestLog) | Should -Be $vtBefore
+            (Measure-ReputationRequestLog) | Should -Be $reputationBefore
         }
         finally {
             Connect-VirusTotal -BaseUri $script:Server.BaseUrl -ApiKey $script:VtKey | Out-Null
@@ -178,33 +234,16 @@ Describe 'Get-EpmElevationSummary with reputation' {
         }
     }
 
-    It 'Returns all groupings when VirusTotal fails along the way' {
+    It 'Returns every grouping as Unavailable when reputation enrichment fails' {
         $summary = @(InModuleScope EndpointOps -Parameters @{ Production = $script:Production } {
                 param($Production)
-                $script:VtCallsForSummary = 0
-                Mock Get-VtFileReport {
-                    $script:VtCallsForSummary++
-                    if ($script:VtCallsForSummary -eq 1) {
-                        return [pscustomobject]@{
-                            Verdict = 'Clean'; MaliciousCount = 0; Hash = ('A' * 38) + '01'
-                        }
-                    }
-                    throw 'VirusTotal failure injected after the first grouping'
-                }
+                Mock Get-FileReputation { throw 'Reputation failure injected for every grouping' }
 
-                try {
-                    Get-EpmElevationSummary -SetId $Production -IncludeReputation -MinIntervalMs 0
-                }
-                finally {
-                    Remove-Variable -Name VtCallsForSummary -Scope Script -ErrorAction SilentlyContinue
-                }
+                Get-EpmElevationSummary -SetId $Production -IncludeReputation -MinIntervalMs 0
             })
 
         $summary.Count | Should -Be 5
-        (Get-GroupedSummary -Summary $summary -Hash $script:HContoso).Reputation | Should -BeExactly 'Clean'
-        (Get-GroupedSummary -Summary $summary -Hash $script:HFabrikam).Reputation | Should -BeExactly 'Unavailable'
-        (Get-GroupedSummary -Summary $summary -Hash $script:HMicrosoft).Reputation | Should -BeExactly 'Unavailable'
-        (Get-GroupedSummary -Summary $summary -Hash $script:HNorthwind).Reputation | Should -BeExactly 'Unavailable'
-        (Get-GroupedSummary -Summary $summary -Hash $script:HUnknown).Reputation | Should -BeExactly 'Unavailable'
+        @($summary | Where-Object Reputation -ne 'Unavailable').Count | Should -Be 0
+        @($summary | Where-Object { @($_.ReputationDetail.Sources).Count -ne 0 }).Count | Should -Be 0
     }
 }

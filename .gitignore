@@ -30,6 +30,7 @@ build/
 # Logs and data
 *.log
 logs/
+reputation-cache.json
 *.csv
 !tests/**/*.csv
 
