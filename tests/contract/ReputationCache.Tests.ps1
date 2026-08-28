@@ -429,8 +429,8 @@ Describe 'Get-FileReputation reputation cache' {
         @($result.Sources).Source | Should -Be @('VirusTotal')
     }
 
-    # Production break caught: serving a malicious cache without every required third-stage source.
-    It '17. does not serve an incomplete Malicious verdict without ThreatFox' {
+    # Security invariant: missing enrichment cannot suppress or re-query decisive malicious evidence.
+    It '17. serves available fresh Malicious evidence without requiring every third-stage source' {
         $cachePath = Join-Path $TestDrive 'partial-malicious/reputation-cache.json'
         ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
             (ConvertTo-TestReputationCacheEntry -Hash $script:MaliciousHash -Source 'VirusTotal' `
@@ -447,8 +447,9 @@ Describe 'Get-FileReputation reputation cache' {
             -CachePath $cachePath -ReferenceDate $script:ReferenceDate
 
         $after = Get-ReputationRequestCount -Path $vtPath
-        ($after - $before) | Should -Be 1
+        ($after - $before) | Should -Be 0
         $result.Verdict | Should -BeExactly 'Malicious'
+        @($result.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar', 'HybridAnalysis')
     }
 
     # Production break caught: requiring complementary cache entries when VirusTotal is already clean.
@@ -489,5 +490,148 @@ Describe 'Get-FileReputation reputation cache' {
         ($after - $before) | Should -Be 0
         $result.Verdict | Should -BeExactly 'Unknown'
         @($result.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar')
+    }
+
+    # Security regression: a reassuring provider result must never hide fresh malicious evidence
+    # already present for the same file.
+    It '20. makes fresh cached Malicious evidence dominate a fresh VirusTotal Clean result' {
+        $cachePath = Join-Path $TestDrive 'mixed-fresh/cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'VirusTotal' `
+                -Verdict 'Clean' -QueryDate $script:ReferenceDate)
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'MalwareBazaar' `
+                -Verdict 'Malicious' -QueryDate $script:ReferenceDate)
+        )
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $result.Verdict | Should -BeExactly 'Malicious'
+        @($result.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar')
+        @($result.Sources | Where-Object Verdict -eq 'Malicious').Source |
+            Should -Be @('MalwareBazaar')
+    }
+
+    It '21. ignores expired cached Malicious evidence beside a fresh VirusTotal Clean result' {
+        $cachePath = Join-Path $TestDrive 'mixed-expired-malicious/cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'VirusTotal' `
+                -Verdict 'Clean' -QueryDate $script:ReferenceDate)
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'MalwareBazaar' `
+                -Verdict 'Malicious' -QueryDate $script:ReferenceDate.AddDays(-91))
+        )
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $result.Verdict | Should -BeExactly 'Clean'
+        @($result.Sources).Source | Should -Be @('VirusTotal')
+    }
+
+    It '22. preserves fresh cached Malicious evidence when the VirusTotal entry is expired' {
+        $cachePath = Join-Path $TestDrive 'expired-vt-fresh-malicious/cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'VirusTotal' `
+                -Verdict 'Clean' -QueryDate $script:ReferenceDate.AddDays(-8))
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'MalwareBazaar' `
+                -Verdict 'Malicious' -QueryDate $script:ReferenceDate)
+        )
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $result.Verdict | Should -BeExactly 'Malicious'
+        @($result.Sources).Source | Should -Be @('MalwareBazaar')
+    }
+
+    It '23. keeps SkipCascade VirusTotal-only when complementary cached evidence is Malicious' {
+        $cachePath = Join-Path $TestDrive 'mixed-skip-cascade/cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'VirusTotal' `
+                -Verdict 'Clean' -QueryDate $script:ReferenceDate)
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'MalwareBazaar' `
+                -Verdict 'Malicious' -QueryDate $script:ReferenceDate)
+        )
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $result.Verdict | Should -BeExactly 'Clean'
+        @($result.Sources).Source | Should -Be @('VirusTotal')
+    }
+
+    It '24. never lets cached Clean evidence promote an Unknown VirusTotal result' {
+        $cachePath = Join-Path $TestDrive 'unknown-plus-clean/cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            (ConvertTo-TestReputationCacheEntry -Hash $script:KnownHash -Source 'VirusTotal' `
+                -Verdict 'Unknown' -QueryDate $script:ReferenceDate)
+            (ConvertTo-TestReputationCacheEntry -Hash $script:KnownHash -Source 'MalwareBazaar' `
+                -Verdict 'Clean' -QueryDate $script:ReferenceDate)
+        )
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $result = Get-FileReputation -Hash $script:KnownHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $result.Verdict | Should -BeExactly 'Unknown'
+        @($result.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar')
+    }
+
+    It '25. deduplicates fresh same-source Malicious evidence without falling back to live Clean' {
+        $cachePath = Join-Path $TestDrive 'duplicate-malicious-source/cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'VirusTotal' `
+                -Verdict 'Clean' -QueryDate $script:ReferenceDate)
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'MalwareBazaar' `
+                -Verdict 'Malicious' -QueryDate $script:ReferenceDate.AddMinutes(-1))
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'MalwareBazaar' `
+                -Verdict 'Malicious' -QueryDate $script:ReferenceDate)
+        )
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $result.Verdict | Should -BeExactly 'Malicious'
+        @($result.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar')
+        @($result.Sources | Where-Object Source -eq 'MalwareBazaar').Count | Should -Be 1
+    }
+
+    # Security regression: SkipCascade must reduce contradictory VirusTotal cache entries before
+    # deciding whether the cache is usable. A newer Clean result cannot hide fresh Malicious evidence.
+    It '26. makes cached VirusTotal Malicious dominate duplicate Clean evidence with SkipCascade' {
+        $cachePath = Join-Path $TestDrive 'duplicate-vt-skip-cascade/cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'VirusTotal' `
+                -Verdict 'Malicious' -QueryDate $script:ReferenceDate.AddMinutes(-1))
+            (ConvertTo-TestReputationCacheEntry -Hash $script:CleanHash -Source 'VirusTotal' `
+                -Verdict 'Clean' -QueryDate $script:ReferenceDate)
+        )
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $result.Verdict | Should -BeExactly 'Malicious'
+        @($result.Sources).Source | Should -Be @('VirusTotal')
+        @($result.Sources).Count | Should -Be 1
     }
 }

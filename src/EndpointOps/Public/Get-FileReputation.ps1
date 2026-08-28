@@ -49,30 +49,54 @@ function Get-FileReputation {
         if ($UseCache) {
             $cachedEntries = @(Get-ReputationCacheEntry -Hash $Hash -CachePath $CachePath -ReferenceDate $ReferenceDate)
             $cachedEntriesToServe = [System.Collections.Generic.List[object]]::new()
-            $cachedVtEntries = @($cachedEntries | Where-Object Source -eq 'VirusTotal')
-            if ($cachedVtEntries.Count -eq 1) {
-                $cachedVtEntry = $cachedVtEntries[0]
-                if ($SkipCascade -or $cachedVtEntry.Verdict -eq 'Clean') {
-                    $cachedEntriesToServe.Add($cachedVtEntry)
+            # Canonicalize evidence per source before choosing a query mode. Malicious dominates
+            # duplicate non-malicious entries and is reduced to the newest malicious record.
+            # Duplicate non-malicious evidence remains ambiguous and cannot produce a cache hit.
+            $canonicalCachedEntries = [System.Collections.Generic.List[object]]::new()
+            $hasAmbiguousNonMaliciousDuplicate = $false
+            foreach ($sourceName in @('VirusTotal', 'MalwareBazaar', 'HybridAnalysis', 'ThreatFox')) {
+                $sourceEntries = @($cachedEntries | Where-Object Source -eq $sourceName)
+                if ($sourceEntries.Count -eq 1) {
+                    $canonicalCachedEntries.Add($sourceEntries[0])
                 }
-                elseif ($cachedVtEntry.Verdict -in $cascadeVerdicts) {
-                    $cachedMbEntries = @($cachedEntries | Where-Object Source -eq 'MalwareBazaar')
-                    if ($cachedMbEntries.Count -eq 1) {
-                        $cachedMbEntry = $cachedMbEntries[0]
-                        $requiresThirdStage = $cachedVtEntry.Verdict -eq 'Malicious' -or
-                            $cachedMbEntry.Verdict -eq 'Malicious'
-                        if (-not $requiresThirdStage -and $cachedEntries.Count -eq 2) {
+                elseif ($sourceEntries.Count -gt 1) {
+                    $maliciousSourceEntries = @($sourceEntries | Where-Object Verdict -eq 'Malicious')
+                    if ($maliciousSourceEntries.Count -gt 0) {
+                        $newestMaliciousEntry = @($maliciousSourceEntries |
+                                Sort-Object -Property QueryDate -Descending)[0]
+                        $canonicalCachedEntries.Add($newestMaliciousEntry)
+                    }
+                    else {
+                        $hasAmbiguousNonMaliciousDuplicate = $true
+                    }
+                }
+            }
+
+            if ($SkipCascade) {
+                $canonicalVtEntries = @($canonicalCachedEntries | Where-Object Source -eq 'VirusTotal')
+                if ($canonicalVtEntries.Count -eq 1) {
+                    $cachedEntriesToServe.Add($canonicalVtEntries[0])
+                }
+            }
+            else {
+                $canonicalMaliciousEntries = @($canonicalCachedEntries | Where-Object Verdict -eq 'Malicious')
+                if ($canonicalMaliciousEntries.Count -gt 0) {
+                    foreach ($entry in $canonicalCachedEntries) {
+                        $cachedEntriesToServe.Add($entry)
+                    }
+                }
+                elseif (-not $hasAmbiguousNonMaliciousDuplicate) {
+                    $canonicalVtEntries = @($canonicalCachedEntries | Where-Object Source -eq 'VirusTotal')
+                    if ($canonicalVtEntries.Count -eq 1) {
+                        $cachedVtEntry = $canonicalVtEntries[0]
+                        if ($cachedVtEntry.Verdict -eq 'Clean') {
                             $cachedEntriesToServe.Add($cachedVtEntry)
-                            $cachedEntriesToServe.Add($cachedMbEntry)
                         }
-                        elseif ($requiresThirdStage -and $cachedEntries.Count -eq 4) {
-                            $cachedHaEntries = @($cachedEntries | Where-Object Source -eq 'HybridAnalysis')
-                            $cachedTfEntries = @($cachedEntries | Where-Object Source -eq 'ThreatFox')
-                            if ($cachedHaEntries.Count -eq 1 -and $cachedTfEntries.Count -eq 1) {
+                        elseif ($cachedVtEntry.Verdict -in $cascadeVerdicts) {
+                            $cachedMbEntries = @($canonicalCachedEntries | Where-Object Source -eq 'MalwareBazaar')
+                            if ($cachedMbEntries.Count -eq 1 -and $canonicalCachedEntries.Count -eq 2) {
                                 $cachedEntriesToServe.Add($cachedVtEntry)
-                                $cachedEntriesToServe.Add($cachedMbEntry)
-                                $cachedEntriesToServe.Add($cachedHaEntries[0])
-                                $cachedEntriesToServe.Add($cachedTfEntries[0])
+                                $cachedEntriesToServe.Add($cachedMbEntries[0])
                             }
                         }
                     }
