@@ -1,0 +1,41 @@
+# Secrets: never commit
+.env
+.env.local
+*.pem
+*.key
+*.crt
+*.p12
+# PowerShell credentials exported with Export-Clixml
+*.cred
+*.credential.xml
+
+# Local tooling and session artifacts
+# .claude/ can contain local plans, session context, and scratch files. It is
+# not necessarily secret, but it is not project documentation for a public repository.
+.claude/
+
+# Personal working notes
+Transmission.md
+transmissions/
+NOTES-ENTRETIEN.md
+blueprint*.md
+
+# Test and build output
+testResults*.xml
+coverage*.xml
+output/
+dist/
+build/
+
+# Logs and data
+*.log
+logs/
+*.csv
+!tests/**/*.csv
+
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
