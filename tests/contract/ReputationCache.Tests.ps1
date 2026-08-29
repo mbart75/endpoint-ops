@@ -239,8 +239,9 @@ Describe 'Get-FileReputation reputation cache' {
         }
     }
 
-    # Production break caught: persisting data other than the four cache fields or a source HashUsed value.
-    It "8. persists only the four allowed fields and each source's actual HashUsed value" {
+    # Production break caught: omitting the explicit lookup-to-evidence binding or persisting
+    # operational data beyond the versioned cache contract.
+    It "8. persists only the versioned identity binding and each source's actual HashUsed value" {
         $cachePath = Join-Path $TestDrive 'privacy/reputation-cache.json'
         Connect-HybridAnalysis -ApiKey $script:HaKey -BaseUri $script:Server.BaseUrl | Out-Null
 
@@ -251,7 +252,11 @@ Describe 'Get-FileReputation reputation cache' {
         $result.Sources.Count | Should -Be 4
         $entries.Count | Should -Be 4
         foreach ($entry in $entries) {
-            @($entry.PSObject.Properties.Name) | Should -Be @('Hash', 'Source', 'Verdict', 'QueryDate')
+            @($entry.PSObject.Properties.Name) | Should -Be @(
+                'Version', 'LookupHash', 'CanonicalSha256', 'Hash', 'HashSource',
+                'Source', 'Verdict', 'QueryDate')
+            $entry.Version | Should -Be 2
+            $entry.LookupHash | Should -BeExactly $script:MaliciousHash
             $entry.PSObject.Properties.Name | Should -Not -Contain 'Detail'
             $entry.PSObject.Properties.Name | Should -Not -Contain 'Machine'
             $entry.PSObject.Properties.Name | Should -Not -Contain 'User'
@@ -261,6 +266,8 @@ Describe 'Get-FileReputation reputation cache' {
         $threatFox.Count | Should -Be 1
         $threatFox[0].Hash | Should -Match '^[0-9A-Fa-f]{64}$'
         $threatFox[0].Hash | Should -Not -BeExactly $script:MaliciousHash
+        $threatFox[0].CanonicalSha256 | Should -BeExactly $threatFox[0].Hash
+        $threatFox[0].HashSource | Should -BeExactly 'VirusTotal'
     }
 
     # Production break caught: resolving the default cache location inside the repository or outside ApplicationData.
@@ -633,5 +640,163 @@ Describe 'Get-FileReputation reputation cache' {
         $result.Verdict | Should -BeExactly 'Malicious'
         @($result.Sources).Source | Should -Be @('VirusTotal')
         @($result.Sources).Count | Should -Be 1
+    }
+
+    # Security regression: canonical SHA-256 evidence must remain explicitly bound to the original
+    # SHA-1 lookup across a module reload. A loose cross-hash cache search is never acceptable.
+    It '27. reuses complete canonical malicious evidence with provenance after a module reload' {
+        $cachePath = Join-Path $TestDrive 'canonical-reload/reputation-cache.json'
+        $vtPath = "/api/v3/files/$($script:MaliciousHash)"
+        $canonicalSha256 = ('C' * 62) + '03'
+        $queryReference = [datetime]::UtcNow
+        Connect-HybridAnalysis -ApiKey $script:HaKey -BaseUri $script:Server.BaseUrl | Out-Null
+
+        $first = Get-FileReputation -Hash $script:MaliciousHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $queryReference
+        @($first.Sources).Source | Should -Be @(
+            'VirusTotal', 'MalwareBazaar', 'HybridAnalysis', 'ThreatFox')
+
+        Initialize-ReputationCacheTestModule
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $second = Get-FileReputation -Hash $script:MaliciousHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $queryReference.AddMinutes(1)
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $second.Verdict | Should -BeExactly 'Malicious'
+        @($second.Sources).Source | Should -Be @(
+            'VirusTotal', 'MalwareBazaar', 'HybridAnalysis', 'ThreatFox')
+        $threatFox = @($second.Sources | Where-Object Source -eq 'ThreatFox')
+        $threatFox.Count | Should -Be 1
+        $threatFox[0].HashUsed | Should -BeExactly $canonicalSha256
+        $threatFox[0].HashSource | Should -BeExactly 'VirusTotal'
+        (Get-ReputationRequestCount -Path $vtPath) | Should -BeGreaterThan 0
+    }
+
+    It '28. rejects a contradictory canonical cache relationship and queries normally' {
+        $cachePath = Join-Path $TestDrive 'canonical-mismatch/reputation-cache.json'
+        $wrongCanonicalSha256 = ('B' * 62) + '02'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            [pscustomobject][ordered]@{
+                Version          = 2
+                LookupHash       = $script:CleanHash
+                CanonicalSha256  = $wrongCanonicalSha256
+                Hash             = (('C' * 62) + '03')
+                HashSource       = 'VirusTotal'
+                Source           = 'ThreatFox'
+                Verdict          = 'Malicious'
+                QueryDate        = $script:ReferenceDate.ToString('o')
+            }
+        )
+        $vtPath = "/api/v3/files/$($script:CleanHash)"
+        $before = Get-ReputationRequestCount -Path $vtPath
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = Get-ReputationRequestCount -Path $vtPath
+        ($after - $before) | Should -Be 1
+        $result.Verdict | Should -BeExactly 'Clean'
+        @($result.Sources).Source | Should -Be @('VirusTotal')
+    }
+
+    It '29. never reuses a valid canonical cache group for an unrelated lookup hash' {
+        $cachePath = Join-Path $TestDrive 'canonical-unrelated/reputation-cache.json'
+        $queryReference = [datetime]::UtcNow
+        Connect-HybridAnalysis -ApiKey $script:HaKey -BaseUri $script:Server.BaseUrl | Out-Null
+        Get-FileReputation -Hash $script:MaliciousHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $queryReference | Out-Null
+        Initialize-ReputationCacheTestModule
+        $vtPath = "/api/v3/files/$($script:CleanHash)"
+        $before = Get-ReputationRequestCount -Path $vtPath
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade -UseCache `
+            -CachePath $cachePath -ReferenceDate $queryReference.AddMinutes(1)
+
+        $after = Get-ReputationRequestCount -Path $vtPath
+        ($after - $before) | Should -Be 1
+        $result.Verdict | Should -BeExactly 'Clean'
+        @($result.Sources).Source | Should -Be @('VirusTotal')
+    }
+
+    It '30. rejects a ThreatFox canonical hash that conflicts with its VirusTotal binding' {
+        $cachePath = Join-Path $TestDrive 'canonical-group-conflict/reputation-cache.json'
+        $vtCanonicalSha256 = ('A' * 62) + '01'
+        $tfCanonicalSha256 = ('C' * 62) + '03'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            ([pscustomobject][ordered]@{
+                    Version = 2; LookupHash = $script:CleanHash; CanonicalSha256 = $vtCanonicalSha256
+                    Hash = $script:CleanHash; HashSource = 'EPM'; Source = 'VirusTotal'
+                    Verdict = 'Unknown'; QueryDate = $script:ReferenceDate.ToString('o')
+                })
+            ([pscustomobject][ordered]@{
+                    Version = 2; LookupHash = $script:CleanHash; CanonicalSha256 = $tfCanonicalSha256
+                    Hash = $tfCanonicalSha256; HashSource = 'VirusTotal'; Source = 'ThreatFox'
+                    Verdict = 'Malicious'; QueryDate = $script:ReferenceDate.ToString('o')
+                })
+        )
+        $vtPath = "/api/v3/files/$($script:CleanHash)"
+        $before = Get-ReputationRequestCount -Path $vtPath
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = Get-ReputationRequestCount -Path $vtPath
+        ($after - $before) | Should -Be 1
+        $result.Verdict | Should -BeExactly 'Clean'
+        @($result.Sources).Source | Should -Be @('VirusTotal')
+    }
+
+    It '31. rejects canonical evidence after its VirusTotal binding expires' {
+        $cachePath = Join-Path $TestDrive 'canonical-expired-authority/reputation-cache.json'
+        $canonicalSha256 = ('A' * 62) + '01'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            ([pscustomobject][ordered]@{
+                    Version = 2; LookupHash = $script:CleanHash; CanonicalSha256 = $canonicalSha256
+                    Hash = $script:CleanHash; HashSource = 'EPM'; Source = 'VirusTotal'
+                    Verdict = 'Unknown'; QueryDate = $script:ReferenceDate.AddDays(-8).ToString('o')
+                })
+            ([pscustomobject][ordered]@{
+                    Version = 2; LookupHash = $script:CleanHash; CanonicalSha256 = $canonicalSha256
+                    Hash = $canonicalSha256; HashSource = 'VirusTotal'; Source = 'ThreatFox'
+                    Verdict = 'Malicious'; QueryDate = $script:ReferenceDate.ToString('o')
+                })
+        )
+        $vtPath = "/api/v3/files/$($script:CleanHash)"
+        $before = Get-ReputationRequestCount -Path $vtPath
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = Get-ReputationRequestCount -Path $vtPath
+        ($after - $before) | Should -Be 1
+        $result.Verdict | Should -BeExactly 'Clean'
+        @($result.Sources).Source | Should -Be @('VirusTotal')
+    }
+
+    It '32. rejects a string cache schema version instead of coercing it to an integer' {
+        $cachePath = Join-Path $TestDrive 'canonical-string-version/reputation-cache.json'
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            [pscustomobject][ordered]@{
+                Version          = '2'
+                LookupHash       = $script:CleanHash
+                CanonicalSha256  = (('A' * 62) + '01')
+                Hash             = $script:CleanHash
+                HashSource       = 'EPM'
+                Source           = 'VirusTotal'
+                Verdict          = 'Clean'
+                QueryDate        = $script:ReferenceDate.ToString('o')
+            }
+        )
+        $vtPath = "/api/v3/files/$($script:CleanHash)"
+        $before = Get-ReputationRequestCount -Path $vtPath
+
+        $result = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade -UseCache `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+
+        $after = Get-ReputationRequestCount -Path $vtPath
+        ($after - $before) | Should -Be 1
+        $result.Verdict | Should -BeExactly 'Clean'
     }
 }

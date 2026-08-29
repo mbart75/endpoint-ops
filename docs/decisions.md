@@ -68,8 +68,9 @@ This document records implementation trade-offs, rationale, and known costs. It 
 - **Complementary sources add evidence, not votes.** Provider silence has source-specific meaning; there is no average or majority score. Any malicious evidence makes the aggregate malicious, while clean, unknown, or failed responses can never authorize software or promote a proposal.
 - **The cascade includes VirusTotal-unknown and VirusTotal-unavailable states.** MalwareBazaar may know a recent malicious sample that VirusTotal does not, and a VirusTotal outage must not hide independent evidence.
 - **ThreatFox is a SHA-256 deepening step, not SHA-1 coverage.** It runs only with a valid VirusTotal-derived SHA-256 and cannot address a VirusTotal-unknown EPM SHA-1 by itself.
-- **Persistent caching is opt-in software-inventory storage.** It stores only hash, source, verdict, and query date, never keys. `Clean` and `Unknown` expire after 7 days, `Malicious` after 90 days, and `Unavailable` is never cached.
+- **Persistent caching is opt-in software-inventory storage.** Versioned entries store an explicit lookup-to-evidence relationship, provider provenance, verdict, and query date, never keys. Legacy entries are reused only by exact hash. `Clean` and `Unknown` expire after 7 days, `Malicious` after 90 days, and `Unavailable` is never cached.
 - **Cached malicious evidence is monotonic.** Any fresh malicious entry is decisive even if another fresh entry is clean or the original EPM lookup key differs from a VirusTotal-derived SHA-256. Cache completeness must not require every source to be stored under one hash.
+- **Canonical cache reuse requires an explicit identity binding.** A provider-derived SHA-256 is persisted and reused only when VirusTotal's alias for the input hash matches that input exactly. Loose cross-hash searches are forbidden because they could attach another file's evidence to the lookup.
 
 ## Device Control and retention
 
