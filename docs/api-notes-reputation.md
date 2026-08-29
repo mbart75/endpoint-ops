@@ -59,6 +59,8 @@ Hybrid Analysis is a third-stage source: it adds sandbox context after malicious
 - Body: JSON with `query=search_hash` and the VirusTotal-derived SHA-256.
 - Provenance: the EPM SHA-1 is never silently relabelled as SHA-256; the source result records the pivot hash and VirusTotal provenance.
 
+When persistent caching is enabled, the versioned entry binds the original lookup hash to this validated SHA-256 and retains the actual evidence hash plus `HashSource`. Legacy cache entries have no such relationship and are therefore eligible only for exact-hash reuse. A loose search for matching hashes elsewhere in the cache is intentionally forbidden.
+
 **Validation boundary:** the ThreatFox route and absence-status contract are exercised only by the local mock server. They were not attested against a real ThreatFox service during this implementation and require real-service confirmation before operational use.
 
 ## AlienVault OTX

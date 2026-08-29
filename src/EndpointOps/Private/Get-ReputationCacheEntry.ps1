@@ -26,13 +26,26 @@ function Get-ReputationCacheEntry {
                 return
             }
 
+            if ($entry.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject]) {
+                return
+            }
+
             $propertyNames = @($entry.PSObject.Properties.Name)
-            if ($entry.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject] -or
-                $propertyNames.Count -ne 4 -or
-                $propertyNames[0] -cne 'Hash' -or
-                $propertyNames[1] -cne 'Source' -or
-                $propertyNames[2] -cne 'Verdict' -or
-                $propertyNames[3] -cne 'QueryDate') {
+            $isLegacyEntry = $propertyNames.Count -eq 4 -and
+                $propertyNames[0] -ceq 'Hash' -and
+                $propertyNames[1] -ceq 'Source' -and
+                $propertyNames[2] -ceq 'Verdict' -and
+                $propertyNames[3] -ceq 'QueryDate'
+            $isVersion2Entry = $propertyNames.Count -eq 8 -and
+                $propertyNames[0] -ceq 'Version' -and
+                $propertyNames[1] -ceq 'LookupHash' -and
+                $propertyNames[2] -ceq 'CanonicalSha256' -and
+                $propertyNames[3] -ceq 'Hash' -and
+                $propertyNames[4] -ceq 'HashSource' -and
+                $propertyNames[5] -ceq 'Source' -and
+                $propertyNames[6] -ceq 'Verdict' -and
+                $propertyNames[7] -ceq 'QueryDate'
+            if (-not $isLegacyEntry -and -not $isVersion2Entry) {
                 return
             }
 
@@ -49,15 +62,42 @@ function Get-ReputationCacheEntry {
             }
 
             $entryHash = [string]$entry.Hash
+            $lookupHash = if ($isVersion2Entry) { [string]$entry.LookupHash } else { $entryHash }
+            $canonicalSha256 = if ($isVersion2Entry) { [string]$entry.CanonicalSha256 } else { $null }
+            $hashSource = if ($isVersion2Entry) { [string]$entry.HashSource } else { 'EPM' }
             $source = [string]$entry.Source
             $verdict = [string]$entry.Verdict
-            if ([string]::IsNullOrWhiteSpace($entryHash) -or
+            if ($entryHash -notmatch '^(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$' -or
+                $lookupHash -notmatch '^(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$' -or
                 $source -notin @('VirusTotal', 'MalwareBazaar', 'HybridAnalysis', 'ThreatFox') -or
                 $verdict -notin @('Clean', 'Unknown', 'Malicious')) {
                 return
             }
 
-            if (-not [string]::Equals($entryHash, $Hash, [System.StringComparison]::OrdinalIgnoreCase)) {
+            if ($isVersion2Entry) {
+                if ($entry.Version -isnot [long] -or $entry.Version -ne 2 -or
+                    ($null -ne $entry.CanonicalSha256 -and
+                        $canonicalSha256 -notmatch '^[0-9A-Fa-f]{64}$')) {
+                    return
+                }
+
+                $hasValidEvidenceBinding = if ($source -eq 'ThreatFox') {
+                    -not [string]::IsNullOrEmpty($canonicalSha256) -and
+                    [string]::Equals($entryHash, $canonicalSha256,
+                        [System.StringComparison]::OrdinalIgnoreCase) -and
+                    $hashSource -ceq 'VirusTotal'
+                }
+                else {
+                    [string]::Equals($entryHash, $lookupHash,
+                        [System.StringComparison]::OrdinalIgnoreCase) -and
+                    $hashSource -ceq 'EPM'
+                }
+                if (-not $hasValidEvidenceBinding) {
+                    return
+                }
+            }
+
+            if (-not [string]::Equals($lookupHash, $Hash, [System.StringComparison]::OrdinalIgnoreCase)) {
                 continue
             }
 
@@ -68,11 +108,44 @@ function Get-ReputationCacheEntry {
             }
 
             $validEntries.Add([pscustomobject][ordered]@{
-                    Hash      = $entryHash
-                    Source    = $source
-                    Verdict   = $verdict
-                    QueryDate = $queryDate.UtcDateTime
+                    CacheVersion   = if ($isVersion2Entry) { 2 } else { 1 }
+                    LookupHash     = $lookupHash
+                    CanonicalSha256 = $canonicalSha256
+                    Hash           = $entryHash
+                    HashSource     = $hashSource
+                    Source         = $source
+                    Verdict        = $verdict
+                    QueryDate      = $queryDate.UtcDateTime
                 })
+        }
+
+        $version2Entries = @($validEntries | Where-Object CacheVersion -eq 2)
+        $canonicalBindings = @($version2Entries |
+                Where-Object { -not [string]::IsNullOrEmpty($_.CanonicalSha256) } |
+                ForEach-Object { $_.CanonicalSha256.ToUpperInvariant() } |
+                Select-Object -Unique)
+        if ($canonicalBindings.Count -gt 1) {
+            return
+        }
+
+        $threatFoxEntries = @($version2Entries | Where-Object Source -eq 'ThreatFox')
+        if ($threatFoxEntries.Count -gt 0) {
+            if ($canonicalBindings.Count -ne 1) {
+                return
+            }
+
+            $canonicalBinding = $canonicalBindings[0]
+            $virusTotalBindings = @($version2Entries | Where-Object {
+                    $_.Source -eq 'VirusTotal' -and
+                    [string]::Equals($_.CanonicalSha256, $canonicalBinding,
+                        [System.StringComparison]::OrdinalIgnoreCase)
+                })
+            if ($virusTotalBindings.Count -eq 0 -or
+                ($Hash.Length -eq 64 -and
+                    -not [string]::Equals($Hash, $canonicalBinding,
+                        [System.StringComparison]::OrdinalIgnoreCase))) {
+                return
+            }
         }
 
         foreach ($validEntry in $validEntries) {

@@ -48,7 +48,7 @@ File-reputation enrichment always starts with VirusTotal. After a `Malicious`, `
 
 Persistent caching is disabled unless `Get-FileReputation` receives `-UseCache`. Its default path is `ApplicationData/EndpointOps/reputation-cache.json` under the current user profile. A custom `-CachePath` should be protected as sensitive local software-inventory data.
 
-The cache stores only the hash, source, verdict, and query date; it never stores API keys. `Clean` and `Unknown` entries expire after 7 days, `Malicious` entries after 90 days, and `Unavailable` results are never cached.
+The versioned cache stores the lookup hash, a validated canonical SHA-256 relationship when available, each provider's evidence hash and provenance, the verdict, and the query date; it never stores API keys. Legacy entries remain reusable only by exact hash. `Clean` and `Unknown` entries expire after 7 days, `Malicious` entries after 90 days, and `Unavailable` results are never cached.
 
 ```powershell
 Get-FileReputation -Hash $sha1 -UseCache

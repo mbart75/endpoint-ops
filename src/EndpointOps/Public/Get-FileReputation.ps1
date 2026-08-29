@@ -113,7 +113,7 @@ function Get-FileReputation {
                                 Verdict    = $entry.Verdict
                                 Detail     = "$($entry.Source) result was served from the persistent cache."
                                 HashUsed   = $entry.Hash
-                                HashSource = 'EPM'
+                                HashSource = $entry.HashSource
                                 QueryDate  = $entry.QueryDate
                             })
                     }
@@ -139,6 +139,20 @@ function Get-FileReputation {
         }
 
         $vtReport = Get-VtFileReport -Hash $Hash -MinIntervalMs $MinIntervalMs
+        $reportedLookupHash = switch ($Hash.Length) {
+            32 { [string]$vtReport.Md5 }
+            40 { [string]$vtReport.Sha1 }
+            64 { [string]$vtReport.Sha256 }
+        }
+        $reportedSha256 = [string]$vtReport.Sha256
+        $validatedCanonicalSha256 = if (
+            [string]::Equals($reportedLookupHash, $Hash, [System.StringComparison]::OrdinalIgnoreCase) -and
+            $reportedSha256 -match '^[0-9A-Fa-f]{64}$') {
+            $reportedSha256
+        }
+        else {
+            $null
+        }
         $vtDetail = switch ($vtReport.Verdict) {
             'Malicious' {
                 "VirusTotal reports $($vtReport.MaliciousCount) malicious engine result(s) out of $($vtReport.TotalEngines)."
@@ -179,9 +193,8 @@ function Get-FileReputation {
             $haVerdict = Get-HaFileVerdict -Hash $Hash
             $sources.Add($haVerdict)
 
-            $vtSha256 = [string]$vtReport.Sha256
-            if ($vtSha256 -match '^[0-9A-Fa-f]{64}$') {
-                $tfVerdict = Get-TfFileVerdict -Hash $vtSha256
+            if ($null -ne $validatedCanonicalSha256) {
+                $tfVerdict = Get-TfFileVerdict -Hash $validatedCanonicalSha256
                 $sources.Add($tfVerdict)
             }
         }
@@ -195,7 +208,8 @@ function Get-FileReputation {
 
         if ($UseCache) {
             foreach ($source in $sources) {
-                Write-ReputationCacheEntry -SourceResult $source -CachePath $CachePath
+                Write-ReputationCacheEntry -SourceResult $source -LookupHash $Hash `
+                    -CanonicalSha256 $validatedCanonicalSha256 -CachePath $CachePath
             }
         }
 
