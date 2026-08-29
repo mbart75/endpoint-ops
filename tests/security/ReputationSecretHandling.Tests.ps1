@@ -315,12 +315,37 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
                         }, $true))
                 foreach ($command in $commands) {
                     $commandName = $command.GetCommandName()
-                    if ([string]::IsNullOrWhiteSpace($commandName) -or
-                        -not $script:ConnectSecretParameters.ContainsKey($commandName)) {
+                    if ([string]::IsNullOrWhiteSpace($commandName) -and
+                        $command.CommandElements.Count -gt 0 -and
+                        $command.CommandElements[0] -is
+                            [System.Management.Automation.Language.ParenExpressionAst]) {
+                        $pipelineElements = @($command.CommandElements[0].Pipeline.PipelineElements)
+                        if ($pipelineElements.Count -eq 1 -and
+                            $pipelineElements[0] -is
+                                [System.Management.Automation.Language.CommandExpressionAst]) {
+                            $commandExpression = $pipelineElements[0].Expression
+                            if ($commandExpression -is
+                                [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                                $commandName = [string]$commandExpression.Value
+                            }
+                            elseif ($commandExpression -is
+                                [System.Management.Automation.Language.ExpandableStringExpressionAst] -and
+                                @($commandExpression.NestedExpressions).Count -eq 0) {
+                                $commandName = [string]$commandExpression.Value
+                            }
+                        }
+                    }
+
+                    if ([string]::IsNullOrWhiteSpace($commandName)) {
                         continue
                     }
 
-                    $parameterName = $script:ConnectSecretParameters[$commandName]
+                    $terminalCommandName = $commandName.Substring($commandName.LastIndexOf([char]92) + 1)
+                    if (-not $script:ConnectSecretParameters.ContainsKey($terminalCommandName)) {
+                        continue
+                    }
+
+                    $parameterName = $script:ConnectSecretParameters[$terminalCommandName]
                     for ($index = 1; $index -lt $command.CommandElements.Count; $index++) {
                         $element = $command.CommandElements[$index]
                         if ($element -isnot [System.Management.Automation.Language.CommandParameterAst] -or
@@ -476,6 +501,89 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
         $findingText | Should -Match 'MULTILINE-VT-SECRET'
         $findingText | Should -Match 'MULTILINE-MB-SECRET'
         $findingText | Should -Match 'MULTILINE-HA-SECRET'
+    }
+
+    It 'flags module-qualified literal Connect secrets for all three providers' {
+        $testPath = Join-Path $TestDrive 'scanner-module-qualified.ps1'
+        Set-Content -LiteralPath $testPath -Value @(
+            "EndpointOps\Connect-VirusTotal -ApiKey 'MODULE-VT-SECRET'"
+            "EndpointOps\Connect-MalwareBazaar -AuthKey 'MODULE-MB-SECRET'"
+            "EndpointOps\Connect-HybridAnalysis -ApiKey 'MODULE-HA-SECRET'"
+        ) -Encoding utf8NoBOM
+
+        $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $testPath, [ref]$null, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 3
+        $findingText | Should -Match 'MODULE-VT-SECRET'
+        $findingText | Should -Match 'MODULE-MB-SECRET'
+        $findingText | Should -Match 'MODULE-HA-SECRET'
+    }
+
+    It 'keeps the fixture exception inside tests for module-qualified sinks' {
+        $testDirectory = Join-Path $TestDrive 'tests'
+        $sourceDirectory = Join-Path $TestDrive 'src'
+        $testPath = Join-Path $testDirectory 'scanner-module-fixtures.ps1'
+        $sourcePath = Join-Path $sourceDirectory 'scanner-module-source.ps1'
+        New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
+        New-Item -ItemType Directory -Path $sourceDirectory -Force | Out-Null
+
+        Set-Content -LiteralPath $testPath -Value @(
+            "EndpointOps\Connect-VirusTotal -ApiKey 'MOCK-VT-KEY'"
+            "EndpointOps\Connect-MalwareBazaar -AuthKey 'WRONG-MB-KEY-LEAK'"
+        ) -Encoding utf8NoBOM
+        Set-Content -LiteralPath $sourcePath -Value `
+            "EndpointOps\Connect-HybridAnalysis -ApiKey 'MOCK-HA-KEY'" -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @(
+            [System.IO.FileInfo]$testPath,
+            [System.IO.FileInfo]$sourcePath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 2
+        $findingText | Should -Match 'WRONG-MB-KEY-LEAK'
+        $findingText | Should -Match 'scanner-module-source.ps1.*MOCK-HA-KEY'
+        $findingText | Should -Not -Match 'MOCK-VT-KEY'
+    }
+
+    It 'flags a parenthesized static module-qualified command expression' {
+        $testPath = Join-Path $TestDrive 'scanner-parenthesized-static.ps1'
+        Set-Content -LiteralPath $testPath -Value `
+            "& ('EndpointOps\Connect-HybridAnalysis') -ApiKey 'PARENTHESIZED-HA-SECRET'" `
+            -Encoding utf8NoBOM
+
+        $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $testPath, [ref]$null, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 1
+        $findingText | Should -Match 'PARENTHESIZED-HA-SECRET'
+    }
+
+    It 'leaves dynamic command expressions unresolved without parser failures' {
+        $testPath = Join-Path $TestDrive 'scanner-dynamic-command.ps1'
+        Set-Content -LiteralPath $testPath -Value @(
+            '$commandName = "EndpointOps\Connect-VirusTotal"'
+            "& `$commandName -ApiKey 'DYNAMIC-VT-LITERAL'"
+        ) -Encoding utf8NoBOM
+
+        $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $testPath, [ref]$null, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+
+        $findings | Should -Be @()
     }
 
     It 'finds no hardcoded reputation key in PowerShell files' {
