@@ -152,6 +152,12 @@ tests/mock/            Local mock HTTP server and fixtures
 docs/                  API research, detection backlog, and design decisions
 ```
 
+## Architecture knowledge graph
+
+The repository includes a generated [knowledge-graph report](graphify-out/GRAPH_REPORT.md), the [raw GraphRAG-ready graph](graphify-out/graph.json), and a [single-file interactive viewer](graphify-out/graph.html). The graph combines structural PowerShell relationships with explicitly labelled documentation relationships so architectural links, central components, and validation gaps can be explored without treating inferred edges as facts.
+
+Download `graph.html` and open it locally to use the interactive view. It loads the integrity-pinned `vis-network` library from a public CDN; the report and JSON remain fully readable without executing the viewer.
+
 ## Technical decisions
 
 The implementation rationale, known trade-offs, and security constraints are documented in [technical decisions](docs/decisions.md). Supporting research is available in the [general API notes](docs/api-notes.md), [EPM API notes](docs/api-notes-epm.md), [reputation-service notes](docs/api-notes-reputation.md), and [Device Control rule-usage roadmap](docs/device-control-rule-usage-roadmap.md).
