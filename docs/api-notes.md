@@ -1,6 +1,6 @@
 # API research notes
 
-**Verification date:** 2026-07-24, with the VirusTotal update dated 2026-08-20 and Device Control update dated 2026-07-28.
+**Verification date:** 2026-07-24, with the VirusTotal update dated 2026-08-20 and Device Control roadmap review dated 2026-08-30.
 
 **Purpose:** record what public sources support before implementation, distinguish confirmed behaviour from assumptions, and preserve the items that require real-tenant validation.
 
@@ -17,7 +17,7 @@
 | Offset pagination | ✅ | `skip`/`limit` are deprecated from 2.1.2 and are not used. |
 | Response shape | ✅ | `{ data: [...], pagination: { totalItems, nextCursor } }`. |
 | Exclusions | ⚠️ | `/web/api/v2.1/exclusions` is implemented but not confirmed by official public documentation. |
-| Device Control rules | ⚠️ | `/web/api/v2.1/restrictions` is implemented but not confirmed by official public documentation. |
+| Device Control rules | ⚠️ | `/web/api/v2.1/restrictions` is implemented but not confirmed by official public documentation. A public Postman mirror instead describes `/web/api/v2.1/device-control`; this conflict requires sanctioned tenant validation and is not resolved by guessing. |
 | Move an agent to a group | ⚠️ | `POST /web/api/v2.1/agents/actions/move-to-group` with `{ agentIds, groupId }` is the only module write path and needs real-tenant validation. |
 
 The mock server exercises both plausible terminal-page forms: a missing `pagination` property and `nextCursor: null`. This defensive handling is intentional; it is not evidence that either form is the product’s confirmed behaviour.
@@ -43,15 +43,21 @@ The first public API research noted a historical `Bearer`-token interpretation a
 
 Reputation enrichment is opt-in. A hash lookup discloses that a hash was observed; a base64url URL identifier is reversible and therefore discloses the URL itself. The in-memory counter paces the current process only and does not claim cross-process or daily accounting accuracy.
 
-## Device Control research for W4.7
+## Device Control research for W4.7 and the rule-usage roadmap
+
+The detailed [rule-usage inventory roadmap](device-control-rule-usage-roadmap.md) records per-claim confidence, source URLs, traceability boundaries, and open questions. It is additive to the implemented machine/group-level W4.7 report.
 
 ### Device Control events
 
-The Device Control event collection is publicly described as Windows and macOS Device Control events. It supports `agentIds`, `groupIds`, `siteIds`, event-time filters, `cursor`, `limit`, `skip`, `deviceClasses`, `vendorIds`, `productIds`, `interfaces`, `countOnly`, and `skipCount`.
+A public Postman mirror describes the Device Control event collection as Windows and macOS Device Control events and lists `agentIds`, `groupIds`, `siteIds`, event-time filters, `cursor`, `limit`, `skip`, `deviceClasses`, `vendorIds`, `productIds`, `interfaces`, `countOnly`, and `skipCount`. These details are secondary evidence, not an official SentinelOne-owned API guarantee.
 
 `countOnly` makes “was any device connected?” a count request rather than a full pagination walk. Its exact response shape is not documented. The mock contract assumes an empty `data` array and a count in `pagination.totalItems`; `Get-S1DeviceControlEvent -CountOnly` refuses missing or non-numeric counts rather than silently returning zero.
 
 Device Control requires the Control SKU and does not support Linux. Because SKU availability is not in agent data, `Get-S1UnusedAuthorizationReport` requires `-ControlSkuAvailable`. Without it, potentially permissive agents are classified `OutOfScope` and no Device Control event query runs.
+
+SentinelOne-owned product material states that approved and blocked devices can be configured for reporting to Activity logs. It does not establish that approved-device logging is enabled by default. Consequently, an absence of events cannot support `NoObservedUsage` at rule level until logging coverage is established.
+
+Third-party integration schemas expose an event `ruleId`, but the repository has no official response contract or tenant validation for that field. Field presence is secondary evidence; the proposed `event.ruleId -> rule.id` relationship is a separate inference. VID/PID and scope may support candidate investigation, but they must not be presented as authoritative rule attribution.
 
 ### Group-membership history
 
@@ -61,10 +67,16 @@ Third-party sources corroborate an activities endpoint, but no public source map
 
 SentinelOne retention varies by subscribed SKU. An absence of events beyond the retention window is not evidence of non-use. The report therefore requires a retention input and distinguishes: no observed use within a reliable window, an indeterminate window longer than retention, and an endpoint outside Device Control scope. `AlertAfterDays` must remain strictly lower than `RemoveAfterDays`.
 
+No public source reviewed on 2026-08-30 established the retention or purge semantics of the Device Control Events endpoint specifically. General product-retention statements must not be substituted for that missing evidence.
+
 ## Sources
 
 - [SentinelOne Management API, OpenAPI](https://apis.io/apis/sentinelone/management-api/)
 - [SentinelOne Device Control Events, Postman collection](https://www.postman.com/api-evangelist/sentinelone/request/l9g5krz/get-device-control-events)
+- [SentinelOne Device Rules, Postman collection](https://www.postman.com/api-evangelist/sentinelone/request/wo0p1wr/get-device-rules)
+- [SentinelOne Enhanced USB and Bluetooth Device Control](https://www.sentinelone.com/blog/feature-spotlight-enhanced-usb-bluetooth-device-control/)
+- [SentinelOne Device Control](https://www.sentinelone.com/blog/feature-spotlight-device-control/)
+- [Splunk SOAR SentinelOne connector](https://github.com/splunk-soar-connectors/sentinelone/blob/main/README.md)
 - [SentinelOne logs, Panther](https://docs.panther.com/data-onboarding/supported-logs/sentinel-one)
 - [SentinelOne v2 integration, Cortex XSOAR](https://xsoar.pan.dev/docs/reference/integrations/sentinel-one-v2)
 - [SentinelOne integration, Elastic](https://www.elastic.co/docs/reference/integrations/sentinel_one)

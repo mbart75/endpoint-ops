@@ -80,3 +80,7 @@ This document records implementation trade-offs, rationale, and known costs. It 
 50. **Linux is explicitly out of scope for Device Control.** Device Control covers Windows and macOS. Treating Linux as “no use” would be a high-confidence false positive.
 51. **Require explicit SKU confirmation.** The agent data does not expose Control SKU availability. Without `-ControlSkuAvailable`, the report does not query Device Control events.
 52. **Keep a staged timing threshold.** The default alert threshold is 30 days and the removal threshold is 60 days. Callers may configure both, but `AlertAfterDays` must remain strictly below `RemoveAfterDays`.
+53. **Keep rule-level inventory additive.** The planned rule-centric Device Control view does not replace the existing machine/group-level unused-authorization report or the rule-breadth report. Each answers a different review question.
+54. **Separate allowed usage from blocked demand.** A blocked event can show need or impact after a rule change, but it is not evidence that an active allow rule was used.
+55. **Require logging coverage before inferring non-use.** Public product material describes approved-device activity reporting as configurable. `NoObservedUsage` therefore requires evidence that qualifying allowed events were logged throughout the observation window.
+56. **Snapshots are evidence, not restorable policy.** A read-only rule snapshot may support later impact analysis after deletion. The module must never treat it as authority to restore or recreate a rule automatically.

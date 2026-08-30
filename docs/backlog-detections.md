@@ -38,13 +38,21 @@ Highlight permissive device-control rules, including vendor-wide matching where 
 
 ### W4.7 — unused authorization review
 
-Unused authorization is a three-state question:
+The implemented W4.7 report is deliberately machine/group-level: callers identify permissive groups, then eligible endpoints are checked for any Device Control event during a reliable window. It does not correlate an individual rule with an event, and that limitation must not be hidden behind the word "authorization."
+
+Its result is a three-state question:
 
 1. `NoUsage`: no relevant usage was observed in a reliable window.
 2. `Indeterminate`: the requested window reaches or exceeds the stated retention period.
 3. `OutOfScope`: Device Control coverage cannot be established, including Linux or an unconfirmed Control SKU.
 
 The report requires `RetentionDays` and explicit `-ControlSkuAvailable`. It rejects `AlertAfterDays -ge RemoveAfterDays`; an alert and removal workflow must be a genuine progression.
+
+### W4.8 — rule-level usage inventory (roadmap)
+
+The planned [Device Control rule-usage inventory](device-control-rule-usage-roadmap.md) adds a separate, read-only view across eligible endpoints. It will make tenant-wide events sortable by rule, device identifiers, endpoint, scope, date, and allowed/blocked outcome while preserving W4.7 unchanged.
+
+The roadmap separates observed allowed usage from blocked demand, retains explicit correlation confidence, and evaluates historical rule snapshots so a deleted rule does not disappear from impact analysis. No rule-level implementation or vendor response contract is claimed yet.
 
 ## Cross-cutting requirements
 
