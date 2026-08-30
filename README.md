@@ -137,6 +137,10 @@ CI runs the following gates:
 - The tested ThreatFox entry point and absence-status contract are represented by the local mock only and require confirmation against the real service.
 - SentinelOne retention is tenant-dependent. `Get-S1UnusedAuthorizationReport` requires `RetentionDays` rather than assuming a universal retention period.
 
+## Roadmap
+
+The [Device Control rule-usage inventory roadmap](docs/device-control-rule-usage-roadmap.md) proposes an additive, read-only view that would correlate individual rules with tenant-wide events and preserve historical rule evidence for later impact analysis. It does not replace the existing machine/group report, claim a verified vendor schema, or authorize automatic rule changes.
+
 ## Project structure
 
 ```
@@ -150,4 +154,4 @@ docs/                  API research, detection backlog, and design decisions
 
 ## Technical decisions
 
-The implementation rationale, known trade-offs, and security constraints are documented in [technical decisions](docs/decisions.md). Supporting research is available in the [general API notes](docs/api-notes.md), [EPM API notes](docs/api-notes-epm.md), and [reputation-service notes](docs/api-notes-reputation.md).
+The implementation rationale, known trade-offs, and security constraints are documented in [technical decisions](docs/decisions.md). Supporting research is available in the [general API notes](docs/api-notes.md), [EPM API notes](docs/api-notes-epm.md), [reputation-service notes](docs/api-notes-reputation.md), and [Device Control rule-usage roadmap](docs/device-control-rule-usage-roadmap.md).
