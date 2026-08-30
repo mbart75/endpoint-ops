@@ -1,0 +1,6 @@
+# Keep only the public, portable Graphify outputs in Git.
+*
+!.gitignore
+!GRAPH_REPORT.md
+!graph.html
+!graph.json
