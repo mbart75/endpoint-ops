@@ -77,6 +77,30 @@ function Connect-EpmTenant {
     if (-not $managerUrl) {
         throw "EndpointOps: EPM authentication response is incomplete: ManagerURL is missing or empty, so subsequent requests cannot be sent."
     }
+
+    $rawManagerUri = ([string]$managerUrl).Trim()
+    $managerUriObject = $null
+    $hasAbsoluteManagerUri = [uri]::TryCreate(
+        $rawManagerUri,
+        [System.UriKind]::Absolute,
+        [ref]$managerUriObject)
+    $hasEmbeddedCredentials = $hasAbsoluteManagerUri -and
+        -not [string]::IsNullOrEmpty($managerUriObject.UserInfo)
+    $hasFragment = $hasAbsoluteManagerUri -and
+        -not [string]::IsNullOrEmpty($managerUriObject.Fragment)
+    $hasAllowedLoopbackAuthority = $hasAbsoluteManagerUri -and
+        $rawManagerUri -match '^http://(?:localhost|127\.0\.0\.1)(?::\d+)?(?:/|$)'
+    $hasSafeScheme = $hasAbsoluteManagerUri -and (
+        $managerUriObject.Scheme -ceq [System.Uri]::UriSchemeHttps -or
+        ($managerUriObject.Scheme -ceq [System.Uri]::UriSchemeHttp -and
+            $hasAllowedLoopbackAuthority))
+
+    if (-not $hasAbsoluteManagerUri -or -not $hasSafeScheme -or
+        $hasEmbeddedCredentials -or $hasFragment) {
+        $script:EpmConnection = $null
+        throw 'EndpointOps: ManagerURL must be an absolute HTTPS URI. HTTP is allowed only for an exact loopback host used by local tests; embedded credentials and fragments are rejected.'
+    }
+
     if (-not $tokenText) {
         throw "EndpointOps: EPM authentication response is incomplete: EPMAuthenticationResult is missing or empty, so no token was returned."
     }
@@ -94,7 +118,7 @@ function Connect-EpmTenant {
     }
     $secureToken.MakeReadOnly()
 
-    $managerUri  = ([string]$managerUrl).TrimEnd('/')
+    $managerUri  = $managerUriObject.AbsoluteUri.TrimEnd('/')
     $connectionTimestamp  = Get-Date
 
     $script:EpmConnection = [pscustomobject]@{

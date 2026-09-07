@@ -108,6 +108,52 @@ Describe 'A rejected connection does not disclose secrets' {
     }
 }
 
+Describe 'A dispatcher-provided manager destination does not weaken transport security' {
+
+    AfterEach { Disconnect-EpmTenant }
+
+    It 'rejects a non-loopback HTTP ManagerURL before forwarding the token' {
+        $result = InModuleScope EndpointOps -Parameters @{ Credential = $script:ValidCases } {
+            param([pscredential]$Credential)
+            $script:ManagerRequestObserved = $false
+
+            Mock Invoke-EndpointOpsRequest {
+                param($Uri, $Headers)
+                if ($Uri -like '*/EPM/API/Server/Version') {
+                    return [pscustomobject]@{ Version = 'review' }
+                }
+                if ($Uri -like '*/EPM/API/Auth/EPM/Logon') {
+                    return [pscustomobject]@{
+                        ManagerURL = 'http://manager.example.invalid'
+                        EPMAuthenticationResult = 'SYNTHETIC-EPM-TOKEN'
+                        IsPasswordExpired = $false
+                    }
+                }
+
+                $script:ManagerRequestObserved = -not [string]::IsNullOrEmpty(
+                    [string]$Headers.Authorization)
+            }
+
+            $message = $null
+            try {
+                Connect-EpmTenant -DispatcherUri 'https://dispatcher.example.invalid' `
+                    -Credential $Credential | Out-Null
+            }
+            catch {
+                $message = $_.Exception.Message
+            }
+
+            [pscustomobject]@{
+                ManagerRequestObserved = $script:ManagerRequestObserved
+                ErrorMessage           = $message
+            }
+        }
+
+        $result.ManagerRequestObserved | Should -BeFalse
+        $result.ErrorMessage | Should -BeLike '*ManagerURL*HTTPS*'
+    }
+}
+
 Describe 'The verbose stream does not disclose the password' {
 
     AfterEach { Disconnect-EpmTenant }

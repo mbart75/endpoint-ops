@@ -53,15 +53,16 @@ This document records implementation trade-offs, rationale, and known costs. It 
 38. **Plaintext-password cleanup is limited.** Clearing a local reference makes an immutable .NET string eligible for collection; it does not overwrite memory or guarantee immediate removal. The code does not claim otherwise.
 39. **Some loud failure branches remain untested.** Password-expired and incomplete-login responses fail clearly with named causes and no misleading state. State clearing after validation failure is tested because it can fail silently.
 40. **Typed HTTP exceptions remain technical debt.** The shared transport currently throws formatted strings, so EPM detects 401 through message matching. A typed status exception is the durable solution but would change the shared error surface.
+41. **Independently validate the dispatcher-selected manager transport.** The dispatcher remains trusted to select the EPM manager host, but EndpointOps requires its `ManagerURL` to be an absolute HTTPS URI before constructing or storing token state. HTTP is limited to the original spellings `localhost` and `127.0.0.1` used by local tests. Same-host or same-domain pinning is intentionally absent because the valid dispatcher-to-manager relationship has not been confirmed against an authorized tenant.
 
 ## Reputation enrichment
 
-41. **Unknown is not clean.** Reputation output has the source-defined states `Malicious`, `Clean`, `Unknown`, and `Unavailable`; no boolean turns missing knowledge into approval.
-42. **One engine does not establish a malicious verdict.** The public threshold requires the configured minimum number of malicious engines. A single detection can be a false positive.
-43. **Reputation only downgrades.** A clean result cannot prove legitimacy or justify an elevation. Reputation may reject or weaken an event-derived proposal, never strengthen it.
-44. **Enrichment is optional.** VirusTotal’s public quota makes mandatory enrichment operationally unsuitable for larger reports. The EPM report remains useful without it.
-45. **No file upload exists.** The module has no file-submission code path. Hash and reversible URL-identifier disclosure still make enrichment opt-in.
-46. **Quota accounting is process-local.** The counter enforces session pacing but does not survive a new session or track another process.
+42. **Unknown is not clean.** Reputation output has the source-defined states `Malicious`, `Clean`, `Unknown`, and `Unavailable`; no boolean turns missing knowledge into approval.
+43. **One engine does not establish a malicious verdict.** The public threshold requires the configured minimum number of malicious engines. A single detection can be a false positive.
+44. **Reputation only downgrades.** A clean result cannot prove legitimacy or justify an elevation. Reputation may reject or weaken an event-derived proposal, never strengthen it.
+45. **Enrichment is optional.** VirusTotal’s public quota makes mandatory enrichment operationally unsuitable for larger reports. The EPM report remains useful without it.
+46. **No file upload exists.** The module has no file-submission code path. Hash and reversible URL-identifier disclosure still make enrichment opt-in.
+47. **Quota accounting is process-local.** The counter enforces session pacing but does not survive a new session or track another process.
 
 ### Multi-source and cache decisions
 
@@ -74,13 +75,13 @@ This document records implementation trade-offs, rationale, and known costs. It 
 
 ## Device Control and retention
 
-47. **Retention is a required input.** SentinelOne retention varies by tenant and SKU. Assuming it would convert purged events into false evidence of non-use.
-48. **A window equal to retention is indeterminate.** Oldest events may already be purged, so a reliable window must be strictly shorter than retention; the report returns `Indeterminate` rather than a false `NoUsage`.
-49. **Use three states, not two.** `NoUsage`, `Indeterminate`, and `OutOfScope` distinguish an observation, an unmeasurable period, and a source unable to observe.
-50. **Linux is explicitly out of scope for Device Control.** Device Control covers Windows and macOS. Treating Linux as “no use” would be a high-confidence false positive.
-51. **Require explicit SKU confirmation.** The agent data does not expose Control SKU availability. Without `-ControlSkuAvailable`, the report does not query Device Control events.
-52. **Keep a staged timing threshold.** The default alert threshold is 30 days and the removal threshold is 60 days. Callers may configure both, but `AlertAfterDays` must remain strictly below `RemoveAfterDays`.
-53. **Keep rule-level inventory additive.** The planned rule-centric Device Control view does not replace the existing machine/group-level unused-authorization report or the rule-breadth report. Each answers a different review question.
-54. **Separate allowed usage from blocked demand.** A blocked event can show need or impact after a rule change, but it is not evidence that an active allow rule was used.
-55. **Require logging coverage before inferring non-use.** Public product material describes approved-device activity reporting as configurable. `NoObservedUsage` therefore requires evidence that qualifying allowed events were logged throughout the observation window.
-56. **Snapshots are evidence, not restorable policy.** A read-only rule snapshot may support later impact analysis after deletion. The module must never treat it as authority to restore or recreate a rule automatically.
+48. **Retention is a required input.** SentinelOne retention varies by tenant and SKU. Assuming it would convert purged events into false evidence of non-use.
+49. **A window equal to retention is indeterminate.** Oldest events may already be purged, so a reliable window must be strictly shorter than retention; the report returns `Indeterminate` rather than a false `NoUsage`.
+50. **Use three states, not two.** `NoUsage`, `Indeterminate`, and `OutOfScope` distinguish an observation, an unmeasurable period, and a source unable to observe.
+51. **Linux is explicitly out of scope for Device Control.** Device Control covers Windows and macOS. Treating Linux as “no use” would be a high-confidence false positive.
+52. **Require explicit SKU confirmation.** The agent data does not expose Control SKU availability. Without `-ControlSkuAvailable`, the report does not query Device Control events.
+53. **Keep a staged timing threshold.** The default alert threshold is 30 days and the removal threshold is 60 days. Callers may configure both, but `AlertAfterDays` must remain strictly below `RemoveAfterDays`.
+54. **Keep rule-level inventory additive.** The planned rule-centric Device Control view does not replace the existing machine/group-level unused-authorization report or the rule-breadth report. Each answers a different review question.
+55. **Separate allowed usage from blocked demand.** A blocked event can show need or impact after a rule change, but it is not evidence that an active allow rule was used.
+56. **Require logging coverage before inferring non-use.** Public product material describes approved-device activity reporting as configurable. `NoObservedUsage` therefore requires evidence that qualifying allowed events were logged throughout the observation window.
+57. **Snapshots are evidence, not restorable policy.** A read-only rule snapshot may support later impact analysis after deletion. The module must never treat it as authority to restore or recreate a rule automatically.

@@ -23,6 +23,8 @@ The body requires `Username`, `Password`, and `ApplicationID`. `ApplicationID` i
 
 The structural point is the dispatcher: authenticate against it, then send all subsequent calls to the returned `ManagerURL`, not the dispatcher. Authentication uses `Authorization: basic <Token>`; this is the returned token value, not HTTP Basic user/password construction.
 
+EndpointOps treats the dispatcher-selected manager host as trusted topology but independently validates its transport before constructing or storing token state. `ManagerURL` must be an absolute HTTPS URI without embedded credentials or a fragment. Plain HTTP is accepted only for the exact `localhost` and `127.0.0.1` spellings used by the local mock. Same-host or same-domain pinning is intentionally absent until the valid dispatcher-to-manager relationship can be checked against an authorized tenant; the simulated contract cannot establish that relationship.
+
 Regional dispatchers are documented at [Automate tasks with EPM web services](https://docs.cyberark.com/epm/latest/en/content/webservices/webservicesintro.htm), including `login.epm.cyberark.com/login`, regional prefixes, and `login.epm.cyberarkgov.cloud/login`.
 
 There is no fixed token lifetime. It depends on the tenant’s “Timeout for inactive session” setting. A 401 must therefore be treated as an expected reconnect condition, not as proof of a code defect. The documentation allows only one API login per minute per user, so blind automatic retry of a login can fail.

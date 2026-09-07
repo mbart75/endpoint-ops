@@ -136,6 +136,48 @@ Describe 'Connect-EpmTenant' {
             Connect-EpmTenant -DispatcherUri $script:Dispatcher -Credential $script:Identifiers | Out-Null
             Get-EpmSessionError | Should -BeExactly ''
         }
+
+        It 'Supports an HTTPS manager and validates it with exactly one manager request' {
+            $expectedManagerUri = 'https://manager.example.invalid/tenant'
+            $result = InModuleScope EndpointOps -Parameters @{
+                Credential         = $script:Identifiers
+                ExpectedManagerUri = $expectedManagerUri
+            } {
+                param([pscredential]$Credential, [string]$ExpectedManagerUri)
+                $script:ManagerRequestCount = 0
+                $managerUrlResponse = "$ExpectedManagerUri/"
+
+                Mock Invoke-EndpointOpsRequest {
+                    param($Uri)
+                    if ($Uri -like '*/EPM/API/Server/Version') {
+                        return [pscustomobject]@{ Version = 'review' }
+                    }
+                    if ($Uri -like '*/EPM/API/Auth/EPM/Logon') {
+                        return [pscustomobject]@{
+                            ManagerURL              = $managerUrlResponse
+                            EPMAuthenticationResult = 'SYNTHETIC-EPM-TOKEN'
+                            IsPasswordExpired       = $false
+                        }
+                    }
+
+                    $script:ManagerRequestCount++
+                    return [pscustomobject]@{ Sets = @(); SetsCount = 0 }
+                }
+
+                $connection = Connect-EpmTenant `
+                    -DispatcherUri 'https://dispatcher.example.invalid' `
+                    -Credential $Credential
+
+                [pscustomobject]@{
+                    Connection          = $connection
+                    ManagerRequestCount = $script:ManagerRequestCount
+                }
+            }
+
+            $result.Connection.ManagerUri | Should -BeExactly $expectedManagerUri
+            $result.Connection.Validated | Should -BeTrue
+            $result.ManagerRequestCount | Should -Be 1
+        }
     }
 
     Context 'Rejected password' {
@@ -182,6 +224,63 @@ Describe 'Connect-EpmTenant' {
             catch { $null = $_ }
 
             @(Get-EpmRequestLog -Since $index).Count | Should -Be 0
+        }
+    }
+
+    Context 'Dispatcher-provided ManagerURL guard' {
+
+        It 'Rejects <Reason> before creating connection state' -ForEach @(
+            @{ ManagerURL = 'http://manager.example.invalid'; Reason = 'non-loopback HTTP' }
+            @{ ManagerURL = 'http://127.0.0.2:8080'; Reason = 'unapproved loopback address' }
+            @{ ManagerURL = 'http://127.1:8080'; Reason = 'abbreviated loopback spelling' }
+            @{ ManagerURL = '/relative/manager'; Reason = 'relative URI' }
+            @{ ManagerURL = 'ftp://manager.example.invalid'; Reason = 'unsupported scheme' }
+            @{ ManagerURL = 'https://user:password@manager.example.invalid'; Reason = 'embedded credentials' }
+            @{ ManagerURL = 'https://manager.example.invalid/#fragment'; Reason = 'fragment' }
+        ) {
+            $result = InModuleScope EndpointOps -Parameters @{
+                Credential = $script:Identifiers
+                ManagerURL = $ManagerURL
+            } {
+                param([pscredential]$Credential, [string]$ManagerURL)
+                $script:EpmConnection = $null
+                $managerUrlResponse = $ManagerURL
+
+                Mock Invoke-EndpointOpsRequest {
+                    param($Uri)
+                    if ($Uri -like '*/EPM/API/Server/Version') {
+                        return [pscustomobject]@{ Version = 'review' }
+                    }
+                    if ($Uri -like '*/EPM/API/Auth/EPM/Logon') {
+                        return [pscustomobject]@{
+                            ManagerURL              = $managerUrlResponse
+                            EPMAuthenticationResult = 'SYNTHETIC-EPM-TOKEN'
+                            IsPasswordExpired       = $false
+                        }
+                    }
+                }
+
+                $errorMessage = $null
+                try {
+                    Connect-EpmTenant -DispatcherUri 'https://dispatcher.example.invalid' `
+                        -Credential $Credential | Out-Null
+                }
+                catch {
+                    $errorMessage = $_.Exception.Message
+                }
+
+                $stateError = $null
+                try { Get-EpmConnectionState | Out-Null }
+                catch { $stateError = $_.Exception.Message }
+
+                [pscustomobject]@{
+                    ErrorMessage = $errorMessage
+                    StateError   = $stateError
+                }
+            }
+
+            $result.ErrorMessage | Should -BeLike '*ManagerURL*'
+            $result.StateError | Should -BeLike '*Connect-EpmTenant*'
         }
     }
 
