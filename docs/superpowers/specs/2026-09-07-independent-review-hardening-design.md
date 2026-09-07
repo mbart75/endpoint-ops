@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-07
 
-**Status:** Proposed for implementation
+**Status:** Approved for implementation
 
 **Repository:** `mbart75/endpoint-ops`
 
@@ -180,15 +180,18 @@ SentinelOne cursor pagination detects repeated URLs but has no page-count bound 
 - Malformed or excessive retry instructions cannot create an unbounded sleep.
 - Normal 429 and exponential-backoff tests remain deterministic.
 
-#### Task 10.2: close the dynamic secret-sink test gap
+#### Task 10.2: close and redact the dynamic secret-sink test gap
 
 **Problem**
 
 The repository scanner resolves direct, module-qualified, and statically parenthesized connection commands, but it deliberately ignores dynamic command expressions. A literal passed to `-ApiKey` or `-AuthKey` through a dynamic invocation can therefore survive that scanner.
 
+The scanner also includes the matched literal in each finding string. If a real secret reaches this guard, a failed Pester assertion could echo it into local or CI logs.
+
 **Design**
 
 - Treat a literal value bound to a known sensitive parameter name in a dynamic invocation as a finding even when the command target cannot be resolved.
+- Redact every textual and AST finding so diagnostics identify only file, line, and finding category or parameter name, never the matched value.
 - Keep the stricter resolved-command checks for known connection sinks.
 - Retain only exact synthetic fixture exemptions under `tests/`.
 - Do not attempt general PowerShell data-flow analysis or claim that arbitrary runtime secret construction can be proven safe statically.
@@ -197,6 +200,7 @@ The repository scanner resolves direct, module-qualified, and statically parenth
 **Acceptance criteria**
 
 - The existing dynamic literal fixture becomes a positive finding.
+- Synthetic-secret tests prove that serialized findings never contain the detected value.
 - Variable or secure-string arguments do not become false positives.
 - Test-only exact fixtures remain allowed, while variants and source-tree copies fail.
 - A fault injection that restores the dynamic skip makes the security test red.
