@@ -799,4 +799,29 @@ Describe 'Get-FileReputation reputation cache' {
         ($after - $before) | Should -Be 1
         $result.Verdict | Should -BeExactly 'Clean'
     }
+
+    # Production break caught: persisting the process session cache without the explicit UseCache switch.
+    It '33. keeps the default session cache memory-only and clears it on disconnection' {
+        $cachePath = Join-Path $TestDrive 'session-only/reputation-cache.json'
+        $vtPath = "/api/v3/files/$($script:CleanHash)"
+        $before = Get-ReputationRequestCount -Path $vtPath
+
+        $first = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+        $second = Get-FileReputation -Hash $script:CleanHash.ToLowerInvariant() -MinIntervalMs 0 `
+            -SkipCascade -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+        $afterSessionHit = Get-ReputationRequestCount -Path $vtPath
+
+        Initialize-ReputationCacheTestModule
+        $third = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade `
+            -CachePath $cachePath -ReferenceDate $script:ReferenceDate
+        $afterReconnect = Get-ReputationRequestCount -Path $vtPath
+
+        $first.Verdict | Should -BeExactly 'Clean'
+        $second.Verdict | Should -BeExactly 'Clean'
+        $third.Verdict | Should -BeExactly 'Clean'
+        ($afterSessionHit - $before) | Should -Be 1
+        ($afterReconnect - $before) | Should -Be 2
+        (Test-Path -LiteralPath $cachePath) | Should -BeFalse
+    }
 }

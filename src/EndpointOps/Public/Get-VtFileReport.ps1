@@ -38,8 +38,15 @@ function Get-VtFileReport {
 
     process {
         if ($script:VtFileReportCache.ContainsKey($Hash)) {
-            Copy-VtReport -Report $script:VtFileReportCache[$Hash]
-            return
+            $entry = $script:VtFileReportCache[$Hash]
+            $validityDays = if ($entry.Report.Verdict -eq 'Malicious') { 90 } else { 7 }
+            $age = (Get-VtUtcNow) - $entry.CachedAtUtc
+            if ($age -ge [timespan]::Zero -and
+                $age -le [timespan]::FromDays($validityDays)) {
+                Copy-VtReport -Report $entry.Report
+                return
+            }
+            $null = $script:VtFileReportCache.Remove($Hash)
         }
 
         try {
@@ -61,7 +68,12 @@ function Get-VtFileReport {
                 Sha256           = $null
                 Md5              = $null
             }
-            $script:VtFileReportCache[$Hash] = $report
+            if ($report.Verdict -ne 'Unavailable') {
+                $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                    Report      = $report.PSObject.Copy()
+                    CachedAtUtc = (Get-VtUtcNow)
+                }
+            }
             Copy-VtReport -Report $report
             return
         }
@@ -147,7 +159,12 @@ function Get-VtFileReport {
                 Md5              = $null
             }
         }
-        $script:VtFileReportCache[$Hash] = $report
+        if ($report.Verdict -ne 'Unavailable') {
+            $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                Report      = $report.PSObject.Copy()
+                CachedAtUtc = (Get-VtUtcNow)
+            }
+        }
         Copy-VtReport -Report $report
     }
 }

@@ -30,6 +30,15 @@ Sources: [Public vs Premium API](https://docs.virustotal.com/reference/public-vs
 
 A missing report is `Unknown`, not clean. A malicious file verdict requires the configured minimum number of malicious engines. For a matched EPM SHA-1, the returned SHA-256 may become the ThreatFox pivot.
 
+The process-local session cache is always memory-only and is cleared when VirusTotal disconnects.
+`Clean` and `Unknown` reports remain reusable through the exact seven-day boundary; `Malicious`
+reports remain reusable through the exact 90-day boundary. Older reports and entries timestamped in
+the future are evicted before a new provider request. `Unknown` remains cacheable because repeating
+400 or 404 requests consumes quota without adding evidence. `Unavailable` is never cached, whether
+it results from a transport failure or malformed provider data, so a transient outage can recover on
+the next request. These session rules do not enable the persistent cache: disk storage remains
+strictly opt-in through `Get-FileReputation -UseCache`.
+
 ## MalwareBazaar (abuse.ch)
 
 Source: [MalwareBazaar API](https://bazaar.abuse.ch/api/).
