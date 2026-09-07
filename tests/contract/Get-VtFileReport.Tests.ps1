@@ -17,6 +17,29 @@ BeforeAll {
     $script:RateLimitedHash = ('F' * 38) + '06'
     $script:BadRequestHash = ('0' * 38) + '07'
     $script:FailingHash = ('1' * 38) + '08'
+
+    function ConvertTo-TestVtSessionReport {
+        [CmdletBinding()]
+        param(
+            [Parameter(Mandatory)][string]$Hash,
+            [Parameter(Mandatory)][ValidateSet('Malicious', 'Clean', 'Unknown')][string]$Verdict
+        )
+
+        $maliciousCount = if ($Verdict -eq 'Malicious') { 8 } elseif ($Verdict -eq 'Clean') { 0 } else { $null }
+        $totalEngines = if ($Verdict -in @('Malicious', 'Clean')) { 50 } else { $null }
+        return [pscustomobject]@{
+            PSTypeName       = 'EndpointOps.VirusTotal.FileReport'
+            Hash             = $Hash
+            Verdict          = $Verdict
+            MaliciousCount   = $maliciousCount
+            TotalEngines     = $totalEngines
+            LastAnalysisDate = $null
+            Permalink        = $null
+            Sha1             = $Hash
+            Sha256           = ('D' * 64)
+            Md5              = ('D' * 32)
+        }
+    }
 }
 
 AfterAll {
@@ -116,6 +139,367 @@ Describe 'Get-VtFileReport' {
         $purgeLog = @((Invoke-RestMethod -Uri "$($script:Server.BaseUrl)/_test/reputation").requests)
         $afterPurge = @($purgeLog | Where-Object path -eq $path).Count
         ($afterPurge - $before) | Should -Be 2
+    }
+
+    # Production break caught: serving clean session evidence after its seven-day lifetime.
+    It 'Requeries a Clean session entry after seven days' {
+        $hash = $script:KnownHash
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now } {
+            param($Hash, $Now)
+            $testNow = $Now
+            $script:VtFileReportCache.Clear()
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                            sha1 = $Hash
+                            sha256 = ('A' * 64)
+                            md5 = ('A' * 32)
+                        }
+                    }
+                }
+            }
+
+            $first = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+            Mock Get-VtUtcNow { $testNow.AddDays(8) }
+            $second = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+            $first.Verdict | Should -BeExactly 'Clean'
+            $second.Verdict | Should -BeExactly 'Clean'
+            Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+        }
+    }
+
+    # Production break caught: expiring non-malicious evidence at its inclusive seven-day boundary.
+    It 'Serves a Clean session entry at exactly seven days' {
+        $hash = $script:KnownHash
+        $now = [datetime]'2026-09-07T12:00:00Z'
+        $seedReport = ConvertTo-TestVtSessionReport -Hash $hash -Verdict 'Clean'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now; SeedReport = $seedReport } {
+            param($Hash, $Now, $SeedReport)
+            $script:VtFileReportCache.Clear()
+            $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                Report = $SeedReport.PSObject.Copy(); CachedAtUtc = $Now.AddDays(-7)
+            }
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest { throw 'The provider must not be queried for fresh evidence.' }
+
+            $report = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+            $report.Verdict | Should -BeExactly 'Clean'
+            Should -Invoke Invoke-VtRequest -Times 0 -Exactly
+        }
+    }
+
+    # Production break caught: either not caching provider absence or retaining it beyond seven days.
+    It 'Caches Unknown through seven days and requeries it after seven days' {
+        $hash = ('6' * 38) + '13'
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now } {
+            param($Hash, $Now)
+            $testNow = $Now
+            $script:VtFileReportCache.Clear()
+            $script:VtUnknownCalls = 0
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                $script:VtUnknownCalls++
+                if ($script:VtUnknownCalls -eq 1) {
+                    throw 'EndpointOps: mock VirusTotal provider returned 404.'
+                }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                            sha1 = $Hash
+                            sha256 = ('6' * 64)
+                            md5 = ('6' * 32)
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(7) }
+                $atBoundary = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(8) }
+                $expired = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Unknown'
+                $atBoundary.Verdict | Should -BeExactly 'Unknown'
+                $expired.Verdict | Should -BeExactly 'Clean'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtUnknownCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: caching a transient provider failure for the process lifetime.
+    It 'Recovers from a transient Unavailable result on the next call' {
+        $hash = ('4' * 38) + '11'
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now } {
+            param($Hash, $Now)
+            $testNow = $Now
+            $script:VtFileReportCache.Clear()
+            $script:VtTransientFailureCalls = 0
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                $script:VtTransientFailureCalls++
+                if ($script:VtTransientFailureCalls -eq 1) {
+                    throw 'EndpointOps: HTTP 503 from mock VirusTotal provider.'
+                }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                            sha1 = $Hash
+                            sha256 = ('4' * 64)
+                            md5 = ('4' * 32)
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+                $second = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Unavailable'
+                $second.Verdict | Should -BeExactly 'Clean'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtTransientFailureCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: caching an Unavailable report created by response validation.
+    It 'Recovers from a malformed Unavailable response on the next call' {
+        $hash = ('7' * 38) + '14'
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now } {
+            param($Hash, $Now)
+            $testNow = $Now
+            $script:VtFileReportCache.Clear()
+            $script:VtMalformedRecoveryCalls = 0
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                $script:VtMalformedRecoveryCalls++
+                $malicious = if ($script:VtMalformedRecoveryCalls -eq 1) { 'many' } else { 0 }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = $malicious; harmless = 10 }
+                            sha1 = $Hash
+                            sha256 = ('7' * 64)
+                            md5 = ('7' * 32)
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+                $second = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Unavailable'
+                $second.Verdict | Should -BeExactly 'Clean'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtMalformedRecoveryCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: changing the private envelope or leaking it through the public API.
+    It 'Stores the exact private cache envelope while returning the public report shape' {
+        $hash = ('5' * 38) + '12'
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now } {
+            param($Hash, $Now)
+            $script:VtFileReportCache.Clear()
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest {
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                            sha1 = $Hash
+                            sha256 = ('5' * 64)
+                            md5 = ('5' * 32)
+                        }
+                    }
+                }
+            }
+
+            $report = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+            $entry = $script:VtFileReportCache[$Hash]
+
+            @($entry.PSObject.Properties.Name) | Should -Be @('Report', 'CachedAtUtc')
+            $entry.Report | Should -BeOfType ([pscustomobject])
+            $entry.CachedAtUtc | Should -BeOfType ([datetime])
+            $entry.CachedAtUtc | Should -BeExactly $Now
+            $entry.Report.PSObject.TypeNames[0] | Should -BeExactly 'EndpointOps.VirusTotal.FileReport'
+            $report.PSObject.TypeNames[0] | Should -BeExactly 'EndpointOps.VirusTotal.FileReport'
+            @($report.PSObject.Properties.Name) | Should -Be @(
+                'Hash', 'verdict', 'MaliciousCount', 'TotalEngines', 'LastAnalysisDate',
+                'Permalink', 'Sha1', 'Sha256', 'Md5')
+            @($report.PSObject.Properties.Name) | Should -Not -Contain 'Report'
+            @($report.PSObject.Properties.Name) | Should -Not -Contain 'CachedAtUtc'
+        }
+    }
+
+    # Production break caught: expiring malicious evidence at its inclusive ninety-day boundary.
+    It 'Serves a Malicious session entry at exactly ninety days' {
+        $hash = $script:MaliciousHash
+        $now = [datetime]'2026-09-07T12:00:00Z'
+        $seedReport = ConvertTo-TestVtSessionReport -Hash $hash -Verdict 'Malicious'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now; SeedReport = $seedReport } {
+            param($Hash, $Now, $SeedReport)
+            $script:VtFileReportCache.Clear()
+            $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                Report = $SeedReport.PSObject.Copy(); CachedAtUtc = $Now.AddDays(-90)
+            }
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest { throw 'The provider must not be queried for fresh evidence.' }
+
+            $report = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+            $report.Verdict | Should -BeExactly 'Malicious'
+            Should -Invoke Invoke-VtRequest -Times 0 -Exactly
+        }
+    }
+
+    # Production break caught: serving malicious evidence beyond its ninety-day lifetime.
+    It 'Requeries a Malicious session entry older than ninety days' {
+        $hash = $script:MaliciousHash
+        $now = [datetime]'2026-09-07T12:00:00Z'
+        $seedReport = ConvertTo-TestVtSessionReport -Hash $hash -Verdict 'Malicious'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now; SeedReport = $seedReport } {
+            param($Hash, $Now, $SeedReport)
+            $script:VtFileReportCache.Clear()
+            $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                Report = $SeedReport.PSObject.Copy(); CachedAtUtc = $Now.AddDays(-91)
+            }
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest {
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                            sha1 = $Hash
+                            sha256 = ('C' * 64)
+                            md5 = ('C' * 32)
+                        }
+                    }
+                }
+            }
+
+            $report = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+            $report.Verdict | Should -BeExactly 'Clean'
+            Should -Invoke Invoke-VtRequest -Times 1 -Exactly
+        }
+    }
+
+    # Production break caught: accepting a future cache timestamp after clock rollback or corruption.
+    It 'Evicts a future session timestamp and requeries the provider' {
+        $hash = $script:KnownHash
+        $now = [datetime]'2026-09-07T12:00:00Z'
+        $seedReport = ConvertTo-TestVtSessionReport -Hash $hash -Verdict 'Clean'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now; SeedReport = $seedReport } {
+            param($Hash, $Now, $SeedReport)
+            $script:VtFileReportCache.Clear()
+            $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                Report = $SeedReport.PSObject.Copy(); CachedAtUtc = $Now.AddSeconds(1)
+            }
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest {
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                            sha1 = $Hash
+                            sha256 = ('A' * 64)
+                            md5 = ('A' * 32)
+                        }
+                    }
+                }
+            }
+
+            $report = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+            $report.Verdict | Should -BeExactly 'Clean'
+            Should -Invoke Invoke-VtRequest -Times 1 -Exactly
+        }
+    }
+
+    # Production break caught: replacing the dictionary's case-insensitive hash identity.
+    It 'Shares one valid session envelope across uppercase and lowercase SHA-1 lookups' {
+        $hash = $script:KnownHash
+        $now = [datetime]'2026-09-07T12:00:00Z'
+        $seedReport = ConvertTo-TestVtSessionReport -Hash $hash -Verdict 'Clean'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now; SeedReport = $seedReport } {
+            param($Hash, $Now, $SeedReport)
+            $script:VtFileReportCache.Clear()
+            $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                Report = $SeedReport.PSObject.Copy(); CachedAtUtc = $Now.AddDays(-1)
+            }
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest { throw 'The provider must not be queried for fresh evidence.' }
+
+            $report = Get-VtFileReport -Hash $Hash.ToLowerInvariant() -MinIntervalMs 0
+
+            $script:VtFileReportCache.Count | Should -Be 1
+            $report.Hash | Should -BeExactly $Hash
+            $report.Verdict | Should -BeExactly 'Clean'
+            Should -Invoke Invoke-VtRequest -Times 0 -Exactly
+        }
+    }
+
+    # Production break caught: returning the cache-owned report object to a caller.
+    It 'Defensively copies a seeded session report on every retrieval' {
+        $hash = $script:MaliciousHash
+        $now = [datetime]'2026-09-07T12:00:00Z'
+        $seedReport = ConvertTo-TestVtSessionReport -Hash $hash -Verdict 'Malicious'
+
+        InModuleScope EndpointOps -Parameters @{ Hash = $hash; Now = $now; SeedReport = $seedReport } {
+            param($Hash, $Now, $SeedReport)
+            $script:VtFileReportCache.Clear()
+            $script:VtFileReportCache[$Hash] = [pscustomobject]@{
+                Report = $SeedReport.PSObject.Copy(); CachedAtUtc = $Now.AddDays(-1)
+            }
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest { throw 'The provider must not be queried for fresh evidence.' }
+
+            $first = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+            $first.Verdict = 'Clean'
+            $first.MaliciousCount = 0
+            $second = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+
+            [object]::ReferenceEquals($first, $second) | Should -BeFalse
+            $second.Verdict | Should -BeExactly 'Malicious'
+            $second.MaliciousCount | Should -Be 8
+            Should -Invoke Invoke-VtRequest -Times 0 -Exactly
+        }
     }
 
     It 'Isolates cached results from caller mutations' {
