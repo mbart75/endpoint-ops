@@ -220,18 +220,74 @@ Describe 'Get-EpmElevationSummary with reputation' {
         }
     }
 
-    It 'Throws before querying EPM when VirusTotal is disconnected and identifies the required action' {
+    It 'returns every EPM grouping when VirusTotal is disconnected' {
         Disconnect-VirusTotal
         $before = Measure-EpmRequestLog
 
         try {
-            { Get-EpmElevationSummary -SetId $script:Production -IncludeReputation -MinIntervalMs 0 } |
-                Should -Throw '*Connect-VirusTotal*'
-            (Measure-EpmRequestLog) | Should -Be $before
+            $summary = @(
+                Get-EpmElevationSummary -SetId $script:Production `
+                    -IncludeReputation -MinIntervalMs 0
+            )
+
+            $summary.Count | Should -Be 5
+            @($summary.Reputation | Select-Object -Unique) | Should -Be @('Unavailable')
+            (Measure-EpmRequestLog) | Should -BeGreaterThan $before
+
+            $contoso = Get-GroupedSummary -Summary $summary -Hash $script:HContoso
+            $contoso.ProposalLevel | Should -BeExactly 'Strong'
         }
         finally {
             Connect-VirusTotal -BaseUri $script:Server.BaseUrl -ApiKey $script:VtKey | Out-Null
         }
+    }
+
+    It 'degrades only malicious evidence when other reputation is unavailable' {
+        $summary = @(InModuleScope EndpointOps -Parameters @{
+                Production    = $script:Production
+                MaliciousHash = $script:HContoso
+            } {
+                param($Production, $MaliciousHash)
+
+                $maliciousHashForMock = $MaliciousHash
+                Mock Get-FileReputation {
+                    if ($Hash -eq $maliciousHashForMock) {
+                        return [pscustomobject]@{
+                            PSTypeName = 'EndpointOps.Reputation.FileResult'
+                            Hash       = $Hash
+                            Verdict    = 'Malicious'
+                            Sources    = @([pscustomobject]@{
+                                    Source  = 'VirusTotal'
+                                    Verdict = 'Malicious'
+                                })
+                        }
+                    }
+
+                    throw 'Reputation unavailable for this grouping'
+                }
+
+                Get-EpmElevationSummary -SetId $Production -IncludeReputation -MinIntervalMs 0
+            })
+
+        $summary.Count | Should -Be 5
+
+        $contoso = Get-GroupedSummary -Summary $summary -Hash $script:HContoso
+        $contoso.Reputation | Should -BeExactly 'Malicious'
+        $contoso.ProposalLevel | Should -BeExactly 'None'
+
+        (Get-GroupedSummary -Summary $summary -Hash $script:HFabrikam).ProposalLevel |
+            Should -BeExactly 'Moderate'
+        (Get-GroupedSummary -Summary $summary -Hash $script:HMicrosoft).ProposalLevel |
+            Should -BeExactly 'Weak'
+        (Get-GroupedSummary -Summary $summary -Hash $script:HNorthwind).ProposalLevel |
+            Should -BeExactly 'Weak'
+        (Get-GroupedSummary -Summary $summary -Hash $script:HUnknown).ProposalLevel |
+            Should -BeExactly 'None'
+
+        @($summary | Where-Object Hash -ne $script:HContoso |
+                Select-Object -ExpandProperty Reputation -Unique) |
+            Should -Be @('Unavailable')
+        @($summary | Where-Object ProposalLevel -eq 'Strong').Count | Should -Be 0
     }
 
     It 'Returns every grouping as Unavailable when reputation enrichment fails' {

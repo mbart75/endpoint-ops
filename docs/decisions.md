@@ -67,6 +67,7 @@ This document records implementation trade-offs, rationale, and known costs. It 
 ### Multi-source and cache decisions
 
 - **Complementary sources add evidence, not votes.** Provider silence has source-specific meaning; there is no average or majority score. Any malicious evidence makes the aggregate malicious, while clean, unknown, or failed responses can never authorize software or promote a proposal.
+- **Mandatory-first does not mean mandatory availability.** VirusTotal remains the first provider in the cascade when connected, but its connection is not a prerequisite for collecting or grouping EPM events. Unavailable evidence leaves the EPM-derived proposal unchanged; malicious evidence can still degrade it to `None`.
 - **The cascade includes VirusTotal-unknown and VirusTotal-unavailable states.** MalwareBazaar may know a recent malicious sample that VirusTotal does not, and a VirusTotal outage must not hide independent evidence.
 - **ThreatFox is a SHA-256 deepening step, not SHA-1 coverage.** It runs only with a valid VirusTotal-derived SHA-256 and cannot address a VirusTotal-unknown EPM SHA-1 by itself.
 - **Persistent caching is opt-in software-inventory storage.** Versioned entries store an explicit lookup-to-evidence relationship, provider provenance, verdict, and query date, never keys. Legacy entries are reused only by exact hash. `Clean` and `Unknown` expire after 7 days, `Malicious` after 90 days, and `Unavailable` is never cached.
