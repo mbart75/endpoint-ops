@@ -26,6 +26,8 @@ Aggregate elevation events by publisher and file hash, then propose policy treat
 
 Optional `Get-FileReputation` enrichment starts with the EPM SHA-1 in VirusTotal, consults MalwareBazaar after a malicious, unknown, or unavailable VirusTotal result, and reaches Hybrid Analysis plus ThreatFox only after malicious evidence; ThreatFox additionally requires the SHA-256 pivot returned by VirusTotal. Reputation may reject or weaken a proposal, never promote it, and provider failure does not prevent the EPM grouping from being returned.
 
+Mandatory-first ordering defines the cascade sequence, not a prerequisite for the base EPM report. If a reputation provider is disconnected or unavailable, the grouping remains in the report with `Unavailable` evidence and its EPM-derived proposal level unchanged.
+
 EPM reports state `Contact` as unavailable through the API when public API data cannot identify a policy author.
 
 ## W3 — SentinelOne exclusion review

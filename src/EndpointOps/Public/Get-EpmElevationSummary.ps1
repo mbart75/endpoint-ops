@@ -79,12 +79,6 @@ function Get-EpmElevationSummary {
         throw 'EndpointOps: -IncludeReputation requires -GroupBy Binary; the User grouping does not carry any reputation.'
     }
 
-    # VirusTotal is the mandatory first stage, so validate it before querying EPM. Other providers
-    # are optional and contribute Unavailable evidence when disconnected.
-    if ($IncludeReputation) {
-        $null = Get-VtConnectionState
-    }
-
     # Forward time boundaries only when supplied by the caller. Passing an unassigned [datetime]
     # would send the .NET zero date (year 1) rather than representing an absent boundary.
     $queryParameters = @{ SetId = $SetId; EventType = $EventType; Limit = $Limit }
