@@ -26,6 +26,7 @@ BeforeAll {
     $script:SkipHash = ('E' * 38) + '05'
     $script:UnavailableHash = ('F' * 38) + '06'
     $script:NoReliefHash = ('2' * 38) + '09'
+    $script:MismatchedAliasHash = ('4' * 38) + '11'
 
     function Get-ReputationRequestCount {
         [CmdletBinding()]
@@ -63,6 +64,29 @@ Describe 'Get-FileReputation' {
         Disconnect-MalwareBazaar
         if (Get-Command Disconnect-HybridAnalysis -ErrorAction SilentlyContinue) {
             Disconnect-HybridAnalysis
+        }
+    }
+
+    Context 'Cascade hash boundary' {
+        It 'Declares the EPM cascade hash as exactly one SHA-1 value' {
+            $parameter = (Get-Command Get-FileReputation).Parameters['Hash']
+            $pattern = @($parameter.Attributes | Where-Object { $_ -is [ValidatePattern] })[0]
+
+            $pattern.RegexPattern | Should -BeExactly '^[0-9A-Fa-f]{40}$'
+        }
+
+        It 'Rejects <Case> before any reputation request' -ForEach @(
+            @{ Case = 'an MD5'; Hash = ('1' * 32) }
+            @{ Case = 'a SHA-256'; Hash = ('2' * 64) }
+            @{ Case = 'a non-hexadecimal 40-character value'; Hash = (('3' * 39) + 'G') }
+        ) {
+            $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+            { Get-FileReputation -Hash $Hash -MinIntervalMs 0 } |
+                Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
+
+            $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            ($after - $before) | Should -Be 0
         }
     }
 
@@ -248,6 +272,30 @@ Describe 'Get-FileReputation' {
             ($tfAfter - $tfBefore) | Should -Be 0
             @($result.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar', 'HybridAnalysis')
             @($result.Sources).Source | Should -Not -Contain 'ThreatFox'
+        }
+
+        It 'Does not query ThreatFox when the VirusTotal SHA-256 is bound to another SHA-1' {
+            Connect-HybridAnalysis -ApiKey $script:HaKey -BaseUri $script:Server.BaseUrl | Out-Null
+            $mbBefore = Get-ReputationRequestCount -Path $script:MbPath
+            $haBefore = Get-ReputationRequestCount -Path $script:HaPath
+            $tfBefore = Get-ReputationRequestCount -Path $script:TfPath
+
+            $result = Get-FileReputation -Hash $script:MismatchedAliasHash -MinIntervalMs 0
+
+            $mbAfter = Get-ReputationRequestCount -Path $script:MbPath
+            $haAfter = Get-ReputationRequestCount -Path $script:HaPath
+            $tfAfter = Get-ReputationRequestCount -Path $script:TfPath
+            ($mbAfter - $mbBefore) | Should -Be 1
+            ($haAfter - $haBefore) | Should -Be 1
+            ($tfAfter - $tfBefore) | Should -Be 0
+            @($result.Sources).Source | Should -Be @(
+                'VirusTotal', 'MalwareBazaar', 'HybridAnalysis')
+            $ha = @($result.Sources | Where-Object Source -eq 'HybridAnalysis')
+            $ha.Count | Should -Be 1
+            $ha[0].HashUsed | Should -BeExactly $script:MismatchedAliasHash
+            $ha[0].HashSource | Should -BeExactly 'EPM'
+            @($result.Sources).Source | Should -Not -Contain 'ThreatFox'
+            $result.Verdict | Should -BeExactly 'Malicious'
         }
     }
 

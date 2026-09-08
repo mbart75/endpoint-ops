@@ -14,7 +14,9 @@ This document compares public API characteristics relevant to optional reputatio
 
 ## Cascade and reconciliation
 
-`Get-FileReputation` always queries VirusTotal first. A `Clean` VirusTotal result stops the cascade. A `Malicious`, `Unknown`, or `Unavailable` result continues to MalwareBazaar. Hybrid Analysis is queried only after the aggregate contains malicious evidence; ThreatFox is queried at that stage only when VirusTotal returned a valid SHA-256 pivot.
+`Get-FileReputation` is the EPM multi-provider cascade and accepts exactly one SHA-1 value. MD5, SHA-256, malformed, and non-hexadecimal values are rejected locally before any provider request. This boundary is deliberately narrower than direct `Get-VtFileReport`, which continues to accept the MD5, SHA-1, and SHA-256 identifiers supported by VirusTotal.
+
+The cascade always queries VirusTotal first. A `Clean` VirusTotal result stops the cascade. A `Malicious`, `Unknown`, or `Unavailable` result continues to MalwareBazaar. Hybrid Analysis is queried only after the aggregate contains malicious evidence; ThreatFox is queried at that stage only when VirusTotal returned a valid SHA-256 pivot whose returned SHA-1 alias matches the requested EPM SHA-1 case-insensitively.
 
 Sources add evidence, not votes. Any malicious evidence makes the aggregate `Malicious`; no `Clean`, `Unknown`, or `Unavailable` response can erase it, authorize software, or promote an elevation proposal. Absence has source-specific meaning and must not be presented as clean.
 
@@ -28,7 +30,7 @@ Sources: [Public vs Premium API](https://docs.virustotal.com/reference/public-vs
 - URL report: `GET /urls/{id}`, where `id` is the URL encoded as base64url.
 - Public quota: four requests per minute and 500 requests per day.
 
-A missing report is `Unknown`, not clean. A malicious file verdict requires the configured minimum number of malicious engines. For a matched EPM SHA-1, the returned SHA-256 may become the ThreatFox pivot.
+A missing report is `Unknown`, not clean. A malicious file verdict requires the configured minimum number of malicious engines. For a matched EPM SHA-1, the returned SHA-256 may become the ThreatFox pivot. A syntactically valid SHA-256 is not sufficient: a missing or mismatched VirusTotal SHA-1 alias prevents the pivot.
 
 The process-local session cache is always memory-only and is cleared when VirusTotal disconnects.
 `Clean` and `Unknown` reports remain reusable through the exact seven-day boundary; `Malicious`
@@ -48,7 +50,7 @@ Source: [MalwareBazaar API](https://bazaar.abuse.ch/api/).
 - Body: `application/x-www-form-urlencoded` with `query=get_info&hash=<hash>`.
 - Absence: HTTP 200 with `query_status=hash_not_found`.
 
-The service accepts the SHA-1 exposed by EPM. A matching record is malicious evidence; `hash_not_found` means absence from this source, not `Clean`.
+The service accepts the SHA-1 exposed by EPM. An `ok` response is malicious evidence only when it contains exactly one record whose `sha1` matches the requested hash case-insensitively. Missing identity, a mismatched identity, or multiple matching records makes the response `Unavailable`; no unrelated record or raw provider response is copied into the public detail. `hash_not_found` means absence from this source, not `Clean`.
 
 ## Hybrid Analysis (Falcon Sandbox)
 
@@ -83,3 +85,5 @@ OTX offers reputation and threat-intelligence queries but is not selected for th
 Multiple providers add outbound disclosure, credentials, rate limits, transient failures, and different silence semantics. Every queried provider learns a hash; ThreatFox receives the VirusTotal-derived SHA-256. No provider receives file contents.
 
 Enrichment and persistent caching are opt-in. A malicious match may only reject or weaken a proposal. Missing evidence, provider failure, and clean evidence never create or strengthen an authorization.
+
+EPM binary grouping uses the publisher spelling as received and an uppercase SHA-1 identity. Hash case variants therefore form one deterministic binary group and one distinct-binary identity in user summaries; publisher case is not normalized by this decision.

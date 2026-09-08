@@ -172,6 +172,14 @@ function Start-MockApiServer {
                                     last_analysis_stats = @{ malicious = 9; harmless = 38 }
                                 } } }
                             }
+                            { $_ -ieq (('4' * 38) + '11') } {
+                                Send-Json $context @{ data = @{ attributes = @{
+                                    md5 = (('4' * 30) + '11')
+                                    sha1 = (('5' * 38) + '12')
+                                    sha256 = (('4' * 62) + '11')
+                                    last_analysis_stats = @{ malicious = 8; harmless = 39 }
+                                } } }
+                            }
                             default { Send-Json $context @{ error = @{ code = 'NotFoundError' } } 404 }
                         }
                         continue
@@ -289,6 +297,14 @@ function Start-MockApiServer {
                         }
                         ('^' + ('2' * 38) + '09$') {
                             Send-Json $context @{ query_status = 'hash_not_found' }
+                        }
+                        ('^' + ('4' * 38) + '11$') {
+                            Send-Json $context @{ query_status = 'ok'; data = @(@{
+                                sha1 = $mbHash
+                                sha256 = (('4' * 62) + '11')
+                                md5 = (('4' * 30) + '11')
+                                signature = 'AliasMismatchFixture'
+                            }) }
                         }
                         ('^' + ('E' * 38) + '05$') {
                             Send-Json $context @{ query_status = 'hash_not_found' }
