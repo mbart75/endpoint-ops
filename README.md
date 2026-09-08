@@ -2,7 +2,7 @@
 
 **A PowerShell toolkit for evidence-driven endpoint security reviews.** endpoint-ops turns documented SentinelOne, CyberArk EPM, VirusTotal, MalwareBazaar, Hybrid Analysis, and ThreatFox API responses into reviewable hygiene, policy, and reputation findings without turning an API client into an autonomous security decision-maker.
 
-It is designed for endpoint engineers who prefer auditable command-line workflows to opaque console clicks. Read operations are separated from reporting logic; reports state their reasons in plain text; and the only write workflow is deliberately narrow, protected by PowerShell `ShouldProcess`.
+It is designed for endpoint engineers who prefer auditable command-line workflows to opaque console clicks. Read operations are separated from reporting logic; reports state their reasons in plain text; and the only remote product write workflow is deliberately narrow, protected by PowerShell `ShouldProcess`.
 
 > **Validation boundary:** this repository is implemented from public product documentation and tested only against its local mock HTTP server. The SentinelOne, CyberArk EPM, VirusTotal, MalwareBazaar, Hybrid Analysis, and ThreatFox integrations are documentation- and mock-backed contracts, not guarantees of real-service compatibility. No real tenant, provider account, tenant data, or production credential was used.
 
@@ -36,7 +36,7 @@ Layer 1  Transport          Invoke-EndpointOpsRequest
 | Shared transport | `Invoke-EndpointOpsRequest`, `Get-EndpointOpsVersion` | HTTP requests with retries, backoff, timeouts, and SentinelOne cursor pagination. |
 | SentinelOne connection and queries | `Connect-S1Tenant`, `Disconnect-S1Tenant`, `Get-S1Agent`, `Get-S1Exclusion`, `Get-S1DeviceControlRule`, `Get-S1DeviceControlEvent` | Retrieve endpoint, exclusion, and Device Control information. HTTPS is required except for local mock-server addresses. |
 | SentinelOne review workflows | `Get-S1FleetHygieneReport`, `Get-S1ExclusionRiskReport`, `Get-S1DeviceControlRiskReport`, `Get-S1UnusedAuthorizationReport` | Produce explainable findings for endpoint hygiene, broad exclusions, permissive device rules, and unused authorizations. |
-| SentinelOne remediation | `Invoke-S1FleetRemediation` | The module’s only write command. It can only perform stage-one movement to a tracking group and uses `ShouldProcess`. |
+| SentinelOne remediation | `Invoke-S1FleetRemediation` | The module’s only remote product write command. It can only perform stage-one movement to a tracking group and uses `ShouldProcess`. |
 | CyberArk EPM | `Connect-EpmTenant`, `Disconnect-EpmTenant`, `Get-EpmSet`, `Get-EpmPolicy`, `Get-EpmPolicyDetail`, `Get-EpmElevationEvent`, `Get-EpmPolicyHygieneReport`, `Get-EpmElevationSummary` | Query EPM sets, policies, and elevation events, then surface policy-hygiene and elevation proposals. |
 | Reputation enrichment | `Connect-VirusTotal`, `Disconnect-VirusTotal`, `Get-VtFileReport`, `Get-VtUrlReport`, `Connect-MalwareBazaar`, `Disconnect-MalwareBazaar`, `Connect-HybridAnalysis`, `Disconnect-HybridAnalysis`, `Get-FileReputation`, `Clear-ReputationCache` | Optional hash-only file enrichment with ordered per-source evidence. URL lookup remains VirusTotal-specific. No file upload or automatic authorization exists. |
 
@@ -49,6 +49,10 @@ File-reputation enrichment always starts with VirusTotal. After a `Malicious`, `
 Persistent caching is disabled unless `Get-FileReputation` receives `-UseCache`. Its default path is `ApplicationData/EndpointOps/reputation-cache.json` under the current user profile. A custom `-CachePath` should be protected as sensitive local software-inventory data.
 
 The versioned cache stores the lookup hash, a validated canonical SHA-256 relationship when available, each provider's evidence hash and provenance, the verdict, and the query date; it never stores API keys. Legacy entries remain reusable only by exact hash. `Clean` and `Unknown` entries expire after 7 days, `Malicious` entries after 90 days, and `Unavailable` results are never cached.
+
+Persistent updates serialize through a per-cache sidecar lock with a five-second timeout. Each update re-reads under that lock and atomically replaces the cache with a fully flushed sibling temporary file. The empty `.lock` file is retained to avoid a waiter locking a different inode; sibling temporary files keep replacement on the same filesystem. Fresh malicious evidence cannot be weakened by a clean or unknown refresh for the same binding and source. Established nonempty canonical bindings cannot be removed or replaced by a contradictory update.
+
+`Clear-ReputationCache` is a local `ShouldProcess` operation: `-WhatIf` changes no files and creates no sidecar. Normal clearing accepts only a recognized legacy or version-2 cache; use `-Force -Confirm:$false` only when intentionally removing a corrupt or unrecognized file at the selected path. Clearing an absent cache is a no-op. Cache write failures remain fail-soft for enrichment callers.
 
 ```powershell
 Get-FileReputation -Hash $sha1 -UseCache
@@ -102,7 +106,7 @@ Disconnect-EpmTenant
 - Tokens remain in memory for the active session and are not written to disk. They are converted to plaintext only when an HTTP authorization header is constructed.
 - Verbose logging records header names, not header values. The HTTP transport disables the `Invoke-WebRequest` debug stream to prevent credentials from appearing in debug output.
 - The local mock server requires a token on product routes, while generic transport routes remain unauthenticated to isolate transport tests from authentication tests.
-- `Invoke-S1FleetRemediation` is the only state-changing command. It moves endpoints only to a specified tracking group, uses `SupportsShouldProcess`, sets `ConfirmImpact = 'High'`, and supports `-WhatIf`.
+- `Invoke-S1FleetRemediation` is the only remote product write command. It moves endpoints only to a specified tracking group, uses `SupportsShouldProcess`, sets `ConfirmImpact = 'High'`, and supports `-WhatIf`. Local cache clearing also uses `ShouldProcess`.
 - `-WhatIf` does not bypass connection validation: a disconnected module fails rather than claiming it would act.
 - Each reputation provider that is queried learns a file hash. ThreatFox receives the VirusTotal-derived SHA-256 pivot. VirusTotal URL lookups disclose a reversible base64url URL identifier. Enrichment is opt-in and never uploads file contents.
 

@@ -37,7 +37,7 @@ This document records implementation trade-offs, rationale, and known costs. It 
 
 ## Bounded remediation
 
-28. **One write command, with the least disruptive action.** `Invoke-S1FleetRemediation` only moves endpoints to a tracking group (stage 1). Stage 0 cannot remotely fix a silent endpoint; stage 2 remains a human proposal.
+28. **One remote product write command, with the least disruptive action.** `Invoke-S1FleetRemediation` only moves endpoints to a tracking group (stage 1). Stage 0 cannot remotely fix a silent endpoint; stage 2 remains a human proposal. Local cache clearing is a separate `ShouldProcess` operation.
 29. **Write intent is visible to tests.** A test-only mock-server inspection route journals requested moves, allowing `-WhatIf` to be verified against observable state rather than absence of an exception.
 30. **Validate connection before `-WhatIf`.** A disconnected module must fail instead of reporting an action it cannot actually perform.
 31. **Reference dates are injectable.** `Get-S1FleetHygieneReport -ReferenceDate` makes time-dependent tests deterministic.
@@ -65,6 +65,10 @@ This document records implementation trade-offs, rationale, and known costs. It 
 47. **Quota accounting is process-local.** The counter enforces session pacing but does not survive a new session or track another process.
 
 ### Multi-source and cache decisions
+
+- **Persistent mutation is a locked read-modify-replace transaction.** Canonical absolute paths identify a bounded per-cache exclusive sidecar lock. The empty lock file is retained: deleting it could let a new opener lock a different inode from an existing waiter. Serialization and durable file flushing complete before atomic replacement; temporary files are siblings so replacement stays on the same filesystem. Failures preserve the previous live file and remain fail-soft to enrichment callers.
+- **Evidence refresh is monotonic within its validity window.** A current malicious verdict survives weaker evidence for the same identity binding and source; expired and future-dated evidence does not suppress a current replacement. An established nonempty canonical binding rejects both null and contradictory updates without changing live cache bytes.
+- **Local deletion requires recognizable intent.** `Clear-ReputationCache` calls `ShouldProcess` before creating any lock or directory, then revalidates under the mutation lock. Normal deletion requires a complete recognized cache envelope; `-Force` is explicit corrupt-file recovery. Missing files remain an idempotent no-op, and `-WhatIf` leaves the filesystem untouched.
 
 - **Complementary sources add evidence, not votes.** Provider silence has source-specific meaning; there is no average or majority score. Any malicious evidence makes the aggregate malicious, while clean, unknown, or failed responses can never authorize software or promote a proposal.
 - **Mandatory-first does not mean mandatory availability.** VirusTotal remains the first provider in the cascade when connected, but its connection is not a prerequisite for collecting or grouping EPM events. Unavailable evidence leaves the EPM-derived proposal unchanged; malicious evidence can still degrade it to `None`.

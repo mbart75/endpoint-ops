@@ -14,13 +14,26 @@ function Clear-ReputationCache {
         days because malicious evidence should not disappear quickly.
     .PARAMETER CachePath
         Path to the cache file. The default location is outside the repository in the user profile.
+    .PARAMETER Force
+        Allows removal of an unrecognized or corrupt cache at the explicitly selected path.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
     param(
-        [string]$CachePath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'EndpointOps/reputation-cache.json')
+        [string]$CachePath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'EndpointOps/reputation-cache.json'),
+        [switch]$Force
     )
 
-    if (Test-Path -LiteralPath $CachePath -PathType Leaf) {
-        Remove-Item -LiteralPath $CachePath -Force -ErrorAction Stop
+    $resolvedCachePath = [System.IO.Path]::GetFullPath($CachePath, (Get-Location).Path)
+    $allowUnrecognized = $Force.IsPresent
+    if (-not (Test-Path -LiteralPath $resolvedCachePath -PathType Leaf)) { return }
+    if ($PSCmdlet.ShouldProcess($resolvedCachePath, 'Remove the EndpointOps reputation cache')) {
+        Invoke-WithReputationCacheLock -CachePath $resolvedCachePath -ScriptBlock {
+            $cache = Test-ReputationCacheFile -CachePath $resolvedCachePath
+            if (-not $cache.Exists) { return }
+            if (-not $cache.IsValid -and -not $allowUnrecognized) {
+                throw 'EndpointOps: the supplied path is not a recognized reputation cache.'
+            }
+            Remove-Item -LiteralPath $resolvedCachePath -Force -ErrorAction Stop
+        }
     }
 }
