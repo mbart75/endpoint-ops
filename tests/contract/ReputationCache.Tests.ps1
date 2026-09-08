@@ -86,6 +86,146 @@ AfterAll {
     Stop-MockApiServer -Server $script:Server
 }
 
+Describe 'Persistent cache mutation integrity' {
+    BeforeEach {
+        $script:cachePath = Join-Path $TestDrive "$([guid]::NewGuid().ToString('N')).json"
+        $script:lookup = 'A' * 40
+        $script:canonical = 'B' * 64
+    }
+
+    BeforeAll {
+        function Write-IntegrityCandidate {
+            param($Path, $Lookup, $Canonical, $Verdict = 'Clean', $Source = 'VirusTotal')
+            & (Get-Module EndpointOps) {
+                param($Path, $Lookup, $Canonical, $Verdict, $Source)
+                $candidate = [pscustomobject]@{
+                    HashUsed = $Lookup; HashSource = 'EPM'; Source = $Source
+                    Verdict = $Verdict; QueryDate = [datetime]::UtcNow
+                }
+                Write-ReputationCacheEntry -CachePath $Path -LookupHash $Lookup -CanonicalSha256 $Canonical -SourceResult $candidate
+            } $Path $Lookup $Canonical $Verdict $Source
+        }
+        function Initialize-IntegritySeed {
+            param($Path, $Lookup, $Canonical, $Date = [datetime]::UtcNow)
+            $seed = [pscustomobject][ordered]@{
+                Version = 2; LookupHash = $Lookup; CanonicalSha256 = $Canonical
+                Hash = $Lookup; HashSource = 'EPM'; Source = 'VirusTotal'
+                Verdict = 'Malicious'; QueryDate = $Date.ToString('o')
+            }
+            [IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject @($seed)))
+        }
+    }
+
+    It 'preserves parseable unrelated JSON bytes instead of replacing another application file' {
+        [IO.File]::WriteAllText($cachePath, '[{"project":"not-endpoint-ops"}]')
+        $before = [IO.File]::ReadAllBytes($cachePath)
+        { Write-IntegrityCandidate $cachePath $lookup $canonical } | Should -Not -Throw
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($cachePath)) | Should -BeExactly ([Convert]::ToBase64String($before))
+    }
+
+    It 'runs the entire persistent mutation under the cache lock' {
+        Mock Invoke-WithReputationCacheLock -ModuleName EndpointOps { & $ScriptBlock }
+        Write-IntegrityCandidate $cachePath $lookup $canonical
+        Should -Invoke Invoke-WithReputationCacheLock -ModuleName EndpointOps -Times 1 -Exactly
+        @((Get-Content $cachePath -Raw) | ConvertFrom-Json).Count | Should -Be 1
+    }
+
+    It 'retains fresh malicious evidence instead of a same-binding <Weaker> verdict' -ForEach @(
+        @{ Weaker = 'Clean' }; @{ Weaker = 'Unknown' }
+    ) {
+        Initialize-IntegritySeed $cachePath $lookup $canonical
+        Write-IntegrityCandidate $cachePath $lookup $canonical $Weaker
+        $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+        $entries.Count | Should -Be 1
+        $entries[0].Verdict | Should -Be 'Malicious'
+    }
+
+    It 'preserves bytes when an established binding receives a <Binding> update' -ForEach @(
+        @{ Binding = 'different'; Candidate = ('C' * 64) }
+        @{ Binding = 'null'; Candidate = $null }
+    ) {
+        Initialize-IntegritySeed $cachePath $lookup $canonical
+        $before = [IO.File]::ReadAllBytes($cachePath)
+        Write-IntegrityCandidate $cachePath $lookup $Candidate
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($cachePath)) | Should -BeExactly ([Convert]::ToBase64String($before))
+    }
+
+    It 'does not let <Age> malicious evidence suppress a current replacement' -ForEach @(
+        @{ Age = 'expired'; Days = -91 }; @{ Age = 'future'; Days = 1 }
+    ) {
+        Initialize-IntegritySeed $cachePath $lookup $canonical ([datetime]::UtcNow.AddDays($Days))
+        Write-IntegrityCandidate $cachePath $lookup $canonical
+        $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+        $entries.Count | Should -Be 1
+        $entries[0].Verdict | Should -Be 'Clean'
+    }
+
+    It 'retains both sources from concurrent processes writing the same identity' {
+        $modulePath = Join-Path $PSScriptRoot '../../src/EndpointOps/EndpointOps.psd1'
+        $jobs = @()
+        try {
+            foreach ($source in @('VirusTotal', 'MalwareBazaar')) {
+                $worker = {
+                    param($ModulePath, $Path, $Lookup, $Canonical, $Source)
+                    $ErrorActionPreference = 'Stop'
+                    Import-Module $ModulePath -Force
+                    & (Get-Module EndpointOps) {
+                        param($Path, $Lookup, $Canonical, $Source)
+                        $candidate = [pscustomobject]@{
+                            HashUsed = $Lookup; HashSource = 'EPM'; Source = $Source
+                            Verdict = $(if ($Source -eq 'VirusTotal') { 'Clean' } else { 'Malicious' })
+                            QueryDate = [datetime]::UtcNow
+                        }
+                        Write-ReputationCacheEntry -CachePath $Path -LookupHash $Lookup -CanonicalSha256 $Canonical -SourceResult $candidate
+                    } $Path $Lookup $Canonical $Source
+                }
+                $jobs += Start-Job -ArgumentList $modulePath, $cachePath, $lookup, $canonical, $source -ScriptBlock $worker
+            }
+            $jobs | Wait-Job -Timeout 10 | Out-Null
+            $jobs.State | Should -Be @('Completed', 'Completed')
+            $jobs | Receive-Job -ErrorAction Stop
+            $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+            @($entries | Where-Object Source -eq 'VirusTotal').Count | Should -Be 1
+            @($entries | Where-Object Source -eq 'MalwareBazaar').Count | Should -Be 1
+        }
+        finally { $jobs | Stop-Job; $jobs | Remove-Job -Force }
+    }
+}
+
+Describe 'Recognizable ShouldProcess cache clearing' {
+    BeforeEach {
+        $script:cachePath = Join-Path $TestDrive "$([guid]::NewGuid().ToString('N')).json"
+    }
+
+    It 'leaves both cache bytes and the directory unchanged with WhatIf' {
+        [IO.File]::WriteAllText($cachePath, '[]')
+        Clear-ReputationCache -CachePath $cachePath -WhatIf
+        (Get-Content $cachePath -Raw) | Should -BeExactly '[]'
+        (Test-Path -LiteralPath "$cachePath.lock") | Should -BeFalse
+    }
+
+    It 'rejects unrelated valid JSON and preserves the selected file' {
+        [IO.File]::WriteAllText($cachePath, '[{"project":"not-endpoint-ops"}]')
+        { Clear-ReputationCache -CachePath $cachePath } | Should -Throw '*not a recognized reputation cache*'
+        (Get-Content $cachePath -Raw) | Should -BeExactly '[{"project":"not-endpoint-ops"}]'
+    }
+
+    It 'allows explicit forced recovery of a corrupt cache' {
+        [IO.File]::WriteAllText($cachePath, '[corrupt')
+        Clear-ReputationCache -CachePath $cachePath -Force -Confirm:$false
+        (Test-Path $cachePath) | Should -BeFalse
+    }
+
+    It 'creates no directory or lock when the cache is absent' {
+        $directory = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $absent = Join-Path $directory 'cache.json'
+        Clear-ReputationCache -CachePath $absent
+        Clear-ReputationCache -CachePath $absent -WhatIf
+        (Test-Path $directory) | Should -BeFalse
+        (Test-Path "$absent.lock") | Should -BeFalse
+    }
+}
+
 Describe 'Get-FileReputation reputation cache' {
     BeforeEach {
         Initialize-ReputationCacheTestModule
