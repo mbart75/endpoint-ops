@@ -116,6 +116,13 @@ Describe 'Persistent cache mutation integrity' {
         }
     }
 
+    It 'preserves parseable unrelated JSON bytes instead of replacing another application file' {
+        [IO.File]::WriteAllText($cachePath, '[{"project":"not-endpoint-ops"}]')
+        $before = [IO.File]::ReadAllBytes($cachePath)
+        { Write-IntegrityCandidate $cachePath $lookup $canonical } | Should -Not -Throw
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($cachePath)) | Should -BeExactly ([Convert]::ToBase64String($before))
+    }
+
     It 'runs the entire persistent mutation under the cache lock' {
         Mock Invoke-WithReputationCacheLock -ModuleName EndpointOps { & $ScriptBlock }
         Write-IntegrityCandidate $cachePath $lookup $canonical

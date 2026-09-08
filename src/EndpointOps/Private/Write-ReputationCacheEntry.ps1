@@ -58,6 +58,11 @@ function Write-ReputationCacheEntry {
             if (Test-Path -LiteralPath $resolvedCachePath -PathType Leaf) {
                 try {
                     $json = Get-Content -LiteralPath $resolvedCachePath -Raw -ErrorAction Stop
+                    # WARNING: parseable unrelated files are not disposable cache data.
+                    # Preserve corrupt-cache recovery only after distinguishing a parse failure.
+                    $null = ConvertFrom-Json -InputObject $json -NoEnumerate -ErrorAction Stop
+                    $cache = Test-ReputationCacheFile -CachePath $resolvedCachePath
+                    if (-not $cache.IsValid) { return }
                     if ($json.TrimStart().StartsWith('[')) {
                         foreach ($entry in @($json | ConvertFrom-Json -ErrorAction Stop)) {
                             if ($null -eq $entry -or
