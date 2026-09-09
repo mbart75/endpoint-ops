@@ -33,6 +33,7 @@ function Get-FileReputation {
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
         [ValidatePattern('^[0-9A-Fa-f]{40}$')]
+        [ValidateLength(40, 40)]
         [string]$Hash,
         [ValidateRange(0, 600000)][int]$MinIntervalMs = 15000,
         [switch]$SkipCascade,

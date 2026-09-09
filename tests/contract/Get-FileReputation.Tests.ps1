@@ -71,8 +71,11 @@ Describe 'Get-FileReputation' {
         It 'Declares the EPM cascade hash as exactly one SHA-1 value' {
             $parameter = (Get-Command Get-FileReputation).Parameters['Hash']
             $pattern = @($parameter.Attributes | Where-Object { $_ -is [ValidatePattern] })[0]
+            $length = @($parameter.Attributes | Where-Object { $_ -is [ValidateLength] })[0]
 
             $pattern.RegexPattern | Should -BeExactly '^[0-9A-Fa-f]{40}$'
+            $length.MinLength | Should -Be 40
+            $length.MaxLength | Should -Be 40
         }
 
         It 'Rejects <Case> before any reputation request' -ForEach @(
@@ -87,6 +90,61 @@ Describe 'Get-FileReputation' {
 
             $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
             ($after - $before) | Should -Be 0
+        }
+
+        It 'Rejects a SHA-1 followed by LF before any provider request' {
+            $hashWithFinalLf = ('A' * 40) + [char]10
+            $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            $caughtException = $null
+
+            try {
+                Get-FileReputation -Hash $hashWithFinalLf -MinIntervalMs 0 | Out-Null
+            }
+            catch {
+                $caughtException = $_.Exception
+            }
+
+            $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            ($after - $before) | Should -Be 0
+            $caughtException | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+        }
+
+        It 'Rejects a SHA-1 followed by LF before serving persistent cache evidence' {
+            $hashWithFinalLf = ('A' * 40) + [char]10
+            $referenceDate = [datetime]'2026-09-01T00:00:00Z'
+            $cachePath = Join-Path $TestDrive 'final-lf-boundary/reputation-cache.json'
+            New-Item -Path (Split-Path -Path $cachePath -Parent) -ItemType Directory -Force | Out-Null
+            $cacheJson = @(
+                [ordered]@{
+                    Version = 2
+                    LookupHash = $hashWithFinalLf
+                    CanonicalSha256 = $null
+                    Hash = $hashWithFinalLf
+                    HashSource = 'EPM'
+                    Source = 'VirusTotal'
+                    Verdict = 'Clean'
+                    QueryDate = $referenceDate.AddDays(-1).ToString('o')
+                }
+            ) | ConvertTo-Json -Depth 4
+            Set-Content -LiteralPath $cachePath -Value $cacheJson -Encoding utf8NoBOM -NoNewline
+            $beforeBytes = [System.IO.File]::ReadAllBytes($cachePath)
+            $beforeRequests = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            $caughtException = $null
+            $result = $null
+
+            try {
+                $result = Get-FileReputation -Hash $hashWithFinalLf -MinIntervalMs 0 -UseCache `
+                    -CachePath $cachePath -ReferenceDate $referenceDate
+            }
+            catch {
+                $caughtException = $_.Exception
+            }
+
+            $afterRequests = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            $result | Should -BeNullOrEmpty
+            ($afterRequests - $beforeRequests) | Should -Be 0
+            [System.IO.File]::ReadAllBytes($cachePath) | Should -Be $beforeBytes
+            $caughtException | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
         }
     }
 
