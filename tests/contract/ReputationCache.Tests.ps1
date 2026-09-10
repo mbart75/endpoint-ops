@@ -226,6 +226,46 @@ Describe 'Persistent cache mutation integrity' {
         @($entries).CanonicalSha256 | Should -Be @($canonical, $canonical)
     }
 
+    # Production break caught: carrying one entry's null-to-bound transition into the next
+    # unrelated version-2 entry, or reading that per-entry state before it is initialized.
+    It 'isolates canonical learning when the target entry is <Position>' -ForEach @(
+        @{ Position = 'first'; TargetFirst = $true }
+        @{ Position = 'last'; TargetFirst = $false }
+    ) {
+        $unrelatedLookup = 'D' * 40
+        $unrelatedDate = [datetime]::UtcNow.AddMinutes(-5).ToString('o')
+        $target = [pscustomobject][ordered]@{
+            Version = 2; LookupHash = $lookup; CanonicalSha256 = $null
+            Hash = $lookup; HashSource = 'EPM'; Source = 'VirusTotal'
+            Verdict = 'Malicious'; QueryDate = [datetime]::UtcNow.ToString('o')
+        }
+        $unrelated = [pscustomobject][ordered]@{
+            Version = 2; LookupHash = $unrelatedLookup; CanonicalSha256 = $null
+            Hash = $unrelatedLookup; HashSource = 'EPM'; Source = 'MalwareBazaar'
+            Verdict = 'Unknown'; QueryDate = $unrelatedDate
+        }
+        $seedEntries = if ($TargetFirst) { @($target, $unrelated) } else { @($unrelated, $target) }
+        [IO.File]::WriteAllText($cachePath, (ConvertTo-Json -InputObject $seedEntries))
+
+        Write-IntegrityCandidate $cachePath $lookup $canonical 'Clean' 'VirusTotal'
+
+        $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+        $entries.Count | Should -Be 2
+        $retainedTarget = @($entries | Where-Object LookupHash -eq $lookup)
+        $retainedTarget.Count | Should -Be 1
+        $retainedTarget[0].Verdict | Should -BeExactly 'Malicious'
+        $retainedTarget[0].CanonicalSha256 | Should -BeExactly $canonical
+        $retainedUnrelated = @($entries | Where-Object LookupHash -eq $unrelatedLookup)
+        $retainedUnrelated.Count | Should -Be 1
+        $retainedUnrelated[0].CanonicalSha256 | Should -BeNullOrEmpty
+        $retainedUnrelated[0].Hash | Should -BeExactly $unrelatedLookup
+        $retainedUnrelated[0].HashSource | Should -BeExactly 'EPM'
+        $retainedUnrelated[0].Source | Should -BeExactly 'MalwareBazaar'
+        $retainedUnrelated[0].Verdict | Should -BeExactly 'Unknown'
+        ([datetime]$retainedUnrelated[0].QueryDate).ToUniversalTime() |
+            Should -Be ([datetime]$unrelatedDate).ToUniversalTime()
+    }
+
     It 'retains malicious evidence from deterministic concurrent null-to-bound writers with <Order> first' -ForEach @(
         @{ Order = 'unbound'; CleanDelayMs = 250; MaliciousDelayMs = 0 }
         @{ Order = 'bound'; CleanDelayMs = 0; MaliciousDelayMs = 250 }

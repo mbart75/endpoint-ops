@@ -171,6 +171,7 @@ function Write-ReputationCacheEntry {
                                     continue
                                 }
 
+                                $learnsCanonicalBinding = $false
                                 $candidateLookupHash = if ($writeVersion2) { $LookupHash } else { $hash }
                                 if ([string]::Equals(
                                         $entryLookupHash, $candidateLookupHash,
