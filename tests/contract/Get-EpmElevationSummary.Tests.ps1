@@ -90,6 +90,43 @@ Describe 'Get-EpmElevationSummary' {
         It 'Returns an empty collection on a set without events' {
             @(Get-EpmElevationSummary -SetId $script:Servers).Count | Should -Be 0
         }
+
+        It 'Groups SHA-1 case variants as one binary identity' {
+            $summary = InModuleScope EndpointOps {
+                Mock Get-EpmElevationEvent {
+                    @(
+                        [pscustomobject]@{
+                            Publisher = 'Contoso Software'
+                            Hash = ('A' * 40)
+                            FileName = 'tool.exe'
+                            UserName = 'alice'
+                            ComputerName = 'endpoint-01'
+                            SourceType = 'LocalDisk'
+                            FirstEventDate = [datetime]'2026-07-01T08:00:00Z'
+                            LastEventDate = [datetime]'2026-07-01T08:01:00Z'
+                        }
+                        [pscustomobject]@{
+                            Publisher = 'Contoso Software'
+                            Hash = ('a' * 40)
+                            FileName = 'tool.exe'
+                            UserName = 'bob'
+                            ComputerName = 'endpoint-02'
+                            SourceType = 'LocalDisk'
+                            FirstEventDate = [datetime]'2026-07-02T08:00:00Z'
+                            LastEventDate = [datetime]'2026-07-02T08:01:00Z'
+                        }
+                    )
+                }
+
+                @(Get-EpmElevationSummary -SetId 'case-identity')
+            }
+
+            $summary.Count | Should -Be 1
+            $summary[0].Hash | Should -BeExactly ('A' * 40)
+            $summary[0].EventCount | Should -Be 2
+            $summary[0].DistinctUserCount | Should -Be 2
+            $summary[0].ComputerCount | Should -Be 2
+        }
     }
 
     Context 'Fields exposed by each grouping' {
@@ -261,6 +298,42 @@ Describe 'Get-EpmElevationSummary' {
 # 3.
             @(Get-EpmElevationSummary -SetId $script:Ranking -GroupBy User)[0].DistinctBinaryCount |
                 Should -Be 2
+        }
+
+        It 'Counts SHA-1 case variants as one distinct binary for a user' {
+            $summary = InModuleScope EndpointOps {
+                Mock Get-EpmElevationEvent {
+                    @(
+                        [pscustomobject]@{
+                            Publisher = 'Contoso Software'
+                            Hash = ('A' * 40)
+                            FileName = 'tool.exe'
+                            UserName = 'alice'
+                            ComputerName = 'endpoint-01'
+                            SourceType = 'LocalDisk'
+                            FirstEventDate = [datetime]'2026-07-01T08:00:00Z'
+                            LastEventDate = [datetime]'2026-07-01T08:01:00Z'
+                        }
+                        [pscustomobject]@{
+                            Publisher = 'Contoso Software'
+                            Hash = ('a' * 40)
+                            FileName = 'tool.exe'
+                            UserName = 'alice'
+                            ComputerName = 'endpoint-02'
+                            SourceType = 'LocalDisk'
+                            FirstEventDate = [datetime]'2026-07-02T08:00:00Z'
+                            LastEventDate = [datetime]'2026-07-02T08:01:00Z'
+                        }
+                    )
+                }
+
+                @(Get-EpmElevationSummary -SetId 'case-identity' -GroupBy User)
+            }
+
+            $summary.Count | Should -Be 1
+            $summary[0].RequestCount | Should -Be 2
+            $summary[0].DistinctBinaryCount | Should -Be 1
+            $summary[0].ComputerCount | Should -Be 2
         }
 
         It 'Counts the distinct endpoints per user' {

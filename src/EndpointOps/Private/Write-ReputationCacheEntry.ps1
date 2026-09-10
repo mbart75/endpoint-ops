@@ -20,6 +20,7 @@ function Write-ReputationCacheEntry {
         $source = [string]$SourceResult.Source
         $verdict = [string]$SourceResult.Verdict
         $queryDate = ([datetime]$SourceResult.QueryDate).ToUniversalTime()
+        $candidateAge = [datetime]::UtcNow - $queryDate
         $writeVersion2 = -not [string]::IsNullOrWhiteSpace($LookupHash)
         if ($verdict -eq 'Unavailable' -or
             $source -notin @('VirusTotal', 'MalwareBazaar', 'HybridAnalysis', 'ThreatFox') -or
@@ -54,6 +55,7 @@ function Write-ReputationCacheEntry {
         $resolvedCachePath = [System.IO.Path]::GetFullPath($CachePath, (Get-Location).Path)
         Invoke-WithReputationCacheLock -CachePath $resolvedCachePath -ScriptBlock {
             $suppressCandidate = $false
+            $candidateCanonicalSha256 = $CanonicalSha256
             $entries = [System.Collections.Generic.List[object]]::new()
             if (Test-Path -LiteralPath $resolvedCachePath -PathType Leaf) {
                 try {
@@ -64,7 +66,37 @@ function Write-ReputationCacheEntry {
                     $cache = Test-ReputationCacheFile -CachePath $resolvedCachePath
                     if (-not $cache.IsValid) { return }
                     if ($json.TrimStart().StartsWith('[')) {
-                        foreach ($entry in @($json | ConvertFrom-Json -ErrorAction Stop)) {
+                        $parsedEntries = @($json | ConvertFrom-Json -ErrorAction Stop)
+                        if ($writeVersion2) {
+                            $establishedBindings = @($parsedEntries | Where-Object {
+                                    $_.PSObject.Properties.Name -contains 'Version' -and
+                                    $_.Version -eq 2 -and
+                                    [string]::Equals([string]$_.LookupHash, $LookupHash,
+                                        [System.StringComparison]::OrdinalIgnoreCase) -and
+                                    -not [string]::IsNullOrEmpty([string]$_.CanonicalSha256)
+                                } | ForEach-Object { [string]$_.CanonicalSha256 } | Select-Object -Unique)
+                            if ($establishedBindings.Count -gt 0) {
+                                $establishedBinding = $establishedBindings[0]
+                                if ([string]::IsNullOrEmpty($candidateCanonicalSha256)) {
+                                    # WARNING: only fresh malicious evidence for this exact lookup may
+                                    # inherit an already-established canonical binding. Weaker unbound
+                                    # updates remain rejected so they cannot silently loosen identity.
+                                    if ($source -eq 'ThreatFox' -or $verdict -ne 'Malicious' -or
+                                        $candidateAge -lt [timespan]::Zero -or
+                                        $candidateAge -gt [timespan]::FromDays(90)) {
+                                        return
+                                    }
+                                    $candidateCanonicalSha256 = $establishedBinding
+                                }
+                                elseif (-not [string]::Equals(
+                                        $establishedBinding, $candidateCanonicalSha256,
+                                        [System.StringComparison]::OrdinalIgnoreCase)) {
+                                    return
+                                }
+                            }
+                        }
+
+                        foreach ($entry in $parsedEntries) {
                             if ($null -eq $entry -or
                                 $entry.PSObject.BaseObject -isnot [System.Management.Automation.PSCustomObject]) {
                                 continue
@@ -139,24 +171,21 @@ function Write-ReputationCacheEntry {
                                     continue
                                 }
 
+                                $learnsCanonicalBinding = $false
                                 $candidateLookupHash = if ($writeVersion2) { $LookupHash } else { $hash }
                                 if ([string]::Equals(
                                         $entryLookupHash, $candidateLookupHash,
                                         [System.StringComparison]::OrdinalIgnoreCase)) {
                                     # An established identity cannot be silently replaced or unbound.
-                                    if (-not [string]::IsNullOrEmpty($entryCanonicalSha256) -and
-                                        ([string]::IsNullOrEmpty($CanonicalSha256) -or
-                                            -not [string]::Equals($entryCanonicalSha256, $CanonicalSha256,
-                                                [System.StringComparison]::OrdinalIgnoreCase))) {
-                                        return
-                                    }
-                                    $canonicalBindingsMatch = if (
-                                        [string]::IsNullOrEmpty($entryCanonicalSha256) -and
-                                        [string]::IsNullOrEmpty($CanonicalSha256)) {
+                                    $learnsCanonicalBinding = [string]::IsNullOrEmpty($entryCanonicalSha256) -and
+                                        -not [string]::IsNullOrEmpty($candidateCanonicalSha256)
+                                    $canonicalBindingsMatch = if ($learnsCanonicalBinding -or (
+                                            [string]::IsNullOrEmpty($entryCanonicalSha256) -and
+                                            [string]::IsNullOrEmpty($candidateCanonicalSha256))) {
                                         $true
                                     }
                                     else {
-                                        [string]::Equals($entryCanonicalSha256, $CanonicalSha256,
+                                        [string]::Equals($entryCanonicalSha256, $candidateCanonicalSha256,
                                             [System.StringComparison]::OrdinalIgnoreCase)
                                     }
                                     $sameSource = [string]::Equals($entrySource, $source,
@@ -174,7 +203,11 @@ function Write-ReputationCacheEntry {
                                 $entries.Add([pscustomobject][ordered]@{
                                         Version          = 2
                                         LookupHash       = $entryLookupHash
-                                        CanonicalSha256  = if ($null -eq $entry.CanonicalSha256) { $null } else { $entryCanonicalSha256 }
+                                        CanonicalSha256  = if ($learnsCanonicalBinding) {
+                                            $candidateCanonicalSha256
+                                        }
+                                        elseif ($null -eq $entry.CanonicalSha256) { $null }
+                                        else { $entryCanonicalSha256 }
                                         Hash             = $entryHash
                                         HashSource       = $entryHashSource
                                         Source           = $entrySource
@@ -217,7 +250,10 @@ function Write-ReputationCacheEntry {
                     $entries.Add([pscustomobject][ordered]@{
                             Version          = 2
                             LookupHash       = $LookupHash
-                            CanonicalSha256  = if ([string]::IsNullOrEmpty($CanonicalSha256)) { $null } else { $CanonicalSha256 }
+                            CanonicalSha256  = if ([string]::IsNullOrEmpty($candidateCanonicalSha256)) {
+                                $null
+                            }
+                            else { $candidateCanonicalSha256 }
                             Hash             = $hash
                             HashSource       = $hashSource
                             Source           = $source

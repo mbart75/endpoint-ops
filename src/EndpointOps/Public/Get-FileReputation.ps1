@@ -5,11 +5,12 @@ function Get-FileReputation {
     .SYNOPSIS
         Returns a file hash reputation result with per-source evidence.
     .DESCRIPTION
-        Always queries VirusTotal, then queries MalwareBazaar when VirusTotal flags the file, does
-        not know the hash, or is unavailable. Additional sources can only make the aggregate verdict
-        Malicious; missing evidence and provider failures never promote the existing verdict.
+        Runs the EPM multi-provider reputation cascade for one SHA-1 hash. Always queries VirusTotal,
+        then queries MalwareBazaar when VirusTotal flags the file, does not know the hash, or is
+        unavailable. Additional sources can only make the aggregate verdict Malicious; missing
+        evidence and provider failures never promote the existing verdict.
     .PARAMETER Hash
-        File hash supplied by EPM.
+        SHA-1 file hash supplied by EPM.
     .PARAMETER MinIntervalMs
         Minimum interval forwarded to VirusTotal.
     .PARAMETER SkipCascade
@@ -30,7 +31,10 @@ function Get-FileReputation {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ValueFromPipeline)][string]$Hash,
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [ValidatePattern('^[0-9A-Fa-f]{40}$')]
+        [ValidateLength(40, 40)]
+        [string]$Hash,
         [ValidateRange(0, 600000)][int]$MinIntervalMs = 15000,
         [switch]$SkipCascade,
         [switch]$UseCache,

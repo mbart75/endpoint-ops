@@ -573,6 +573,45 @@ Describe 'Get-VtFileReport' {
         $caughtError.FullyQualifiedErrorId | Should -Match '^ParameterArgumentValidationError'
     }
 
+    It 'Locally rejects a <Length>-character hash followed by LF before provider access' -ForEach @(
+        @{ Length = 32 }
+        @{ Length = 40 }
+        @{ Length = 64 }
+    ) {
+        $logBefore = @((Invoke-RestMethod -Uri "$($script:Server.BaseUrl)/_test/reputation").requests).Count
+        $malformedHash = ('A' * $Length) + "`n"
+
+        $caughtError = try {
+            Get-VtFileReport -Hash $malformedHash -MinIntervalMs 0 | Out-Null
+            $null
+        }
+        catch { $_ }
+
+        $logAfter = @((Invoke-RestMethod -Uri "$($script:Server.BaseUrl)/_test/reputation").requests).Count
+        ($logAfter - $logBefore) | Should -Be 0
+        $caughtError.Exception | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+        $caughtError.FullyQualifiedErrorId | Should -Match '^ParameterArgumentValidationError'
+    }
+
+    It 'Retains direct VirusTotal support for a valid <Kind> identifier' -ForEach @(
+        @{ Kind = 'MD5'; Length = 32 }
+        @{ Kind = 'SHA-1'; Length = 40 }
+        @{ Kind = 'SHA-256'; Length = 64 }
+    ) {
+        $hash = 'A' * $Length
+        $path = "/api/v3/files/$hash"
+        $before = @((Invoke-RestMethod -Uri "$($script:Server.BaseUrl)/_test/reputation").requests |
+                Where-Object path -eq $path).Count
+
+        $report = Get-VtFileReport -Hash $hash -MinIntervalMs 0
+
+        $after = @((Invoke-RestMethod -Uri "$($script:Server.BaseUrl)/_test/reputation").requests |
+                Where-Object path -eq $path).Count
+        ($after - $before) | Should -Be 1
+        $report.Hash | Should -BeExactly $hash
+        $report.Verdict | Should -BeExactly 'Unknown'
+    }
+
     It 'Returns Unavailable for explicitly malformed statistics' {
         $hash = ('2' * 38) + '09'
         $response = [pscustomobject]@{

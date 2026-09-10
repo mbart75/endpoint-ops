@@ -31,7 +31,16 @@ function Get-MbFileVerdict {
                         'MalwareBazaar: query_status is ok but data is empty.')
                 }
 
-                $record = @($response.Data)[0]
+                $matchingRecords = @($response.Data | Where-Object {
+                        $_.PSObject.Properties.Name -contains 'sha1' -and
+                        [string]::Equals([string]$_.sha1, $Hash,
+                            [System.StringComparison]::OrdinalIgnoreCase)
+                    })
+                if ($matchingRecords.Count -ne 1) {
+                    throw [System.IO.InvalidDataException]::new(
+                        'MalwareBazaar: response does not contain one unambiguous SHA-1 match.')
+                }
+                $record = $matchingRecords[0]
                 $signature = if ($record.PSObject.Properties.Name -contains 'signature') {
                     [string]$record.signature
                 }

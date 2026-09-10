@@ -106,13 +106,27 @@ Describe 'Persistent cache mutation integrity' {
             } $Path $Lookup $Canonical $Verdict $Source
         }
         function Initialize-IntegritySeed {
-            param($Path, $Lookup, $Canonical, $Date = [datetime]::UtcNow)
+            param(
+                $Path,
+                $Lookup,
+                [AllowNull()]$Canonical,
+                $Date = [datetime]::UtcNow,
+                $Source = 'VirusTotal'
+            )
             $seed = [pscustomobject][ordered]@{
                 Version = 2; LookupHash = $Lookup; CanonicalSha256 = $Canonical
-                Hash = $Lookup; HashSource = 'EPM'; Source = 'VirusTotal'
+                Hash = $Lookup; HashSource = 'EPM'; Source = $Source
                 Verdict = 'Malicious'; QueryDate = $Date.ToString('o')
             }
             [IO.File]::WriteAllText($Path, (ConvertTo-Json -InputObject @($seed)))
+        }
+        function Wait-IntegritySignal {
+            param($Path)
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            while (-not [IO.File]::Exists($Path) -and $timer.ElapsedMilliseconds -lt 5000) {
+                Start-Sleep -Milliseconds 20
+            }
+            [IO.File]::Exists($Path) | Should -BeTrue
         }
     }
 
@@ -187,6 +201,118 @@ Describe 'Persistent cache mutation integrity' {
             $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
             @($entries | Where-Object Source -eq 'VirusTotal').Count | Should -Be 1
             @($entries | Where-Object Source -eq 'MalwareBazaar').Count | Should -Be 1
+        }
+        finally { $jobs | Stop-Job; $jobs | Remove-Job -Force }
+    }
+
+    It 'retains same-source fresh malicious evidence while learning its canonical binding' {
+        Initialize-IntegritySeed $cachePath $lookup $null
+        Write-IntegrityCandidate $cachePath $lookup $canonical 'Clean' 'VirusTotal'
+
+        $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+        $entries.Count | Should -Be 1
+        $entries[0].Source | Should -BeExactly 'VirusTotal'
+        $entries[0].Verdict | Should -BeExactly 'Malicious'
+        $entries[0].CanonicalSha256 | Should -BeExactly $canonical
+    }
+
+    It 'retains cross-source fresh malicious evidence while learning a canonical binding' {
+        Initialize-IntegritySeed $cachePath $lookup $null ([datetime]::UtcNow) 'MalwareBazaar'
+        Write-IntegrityCandidate $cachePath $lookup $canonical 'Clean' 'VirusTotal'
+
+        $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+        $entries.Count | Should -Be 2
+        @($entries | Where-Object Source -eq 'MalwareBazaar').Verdict | Should -BeExactly 'Malicious'
+        @($entries).CanonicalSha256 | Should -Be @($canonical, $canonical)
+    }
+
+    # Production break caught: carrying one entry's null-to-bound transition into the next
+    # unrelated version-2 entry, or reading that per-entry state before it is initialized.
+    It 'isolates canonical learning when the target entry is <Position>' -ForEach @(
+        @{ Position = 'first'; TargetFirst = $true }
+        @{ Position = 'last'; TargetFirst = $false }
+    ) {
+        $unrelatedLookup = 'D' * 40
+        $unrelatedDate = [datetime]::UtcNow.AddMinutes(-5).ToString('o')
+        $target = [pscustomobject][ordered]@{
+            Version = 2; LookupHash = $lookup; CanonicalSha256 = $null
+            Hash = $lookup; HashSource = 'EPM'; Source = 'VirusTotal'
+            Verdict = 'Malicious'; QueryDate = [datetime]::UtcNow.ToString('o')
+        }
+        $unrelated = [pscustomobject][ordered]@{
+            Version = 2; LookupHash = $unrelatedLookup; CanonicalSha256 = $null
+            Hash = $unrelatedLookup; HashSource = 'EPM'; Source = 'MalwareBazaar'
+            Verdict = 'Unknown'; QueryDate = $unrelatedDate
+        }
+        $seedEntries = if ($TargetFirst) { @($target, $unrelated) } else { @($unrelated, $target) }
+        [IO.File]::WriteAllText($cachePath, (ConvertTo-Json -InputObject $seedEntries))
+
+        Write-IntegrityCandidate $cachePath $lookup $canonical 'Clean' 'VirusTotal'
+
+        $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+        $entries.Count | Should -Be 2
+        $retainedTarget = @($entries | Where-Object LookupHash -eq $lookup)
+        $retainedTarget.Count | Should -Be 1
+        $retainedTarget[0].Verdict | Should -BeExactly 'Malicious'
+        $retainedTarget[0].CanonicalSha256 | Should -BeExactly $canonical
+        $retainedUnrelated = @($entries | Where-Object LookupHash -eq $unrelatedLookup)
+        $retainedUnrelated.Count | Should -Be 1
+        $retainedUnrelated[0].CanonicalSha256 | Should -BeNullOrEmpty
+        $retainedUnrelated[0].Hash | Should -BeExactly $unrelatedLookup
+        $retainedUnrelated[0].HashSource | Should -BeExactly 'EPM'
+        $retainedUnrelated[0].Source | Should -BeExactly 'MalwareBazaar'
+        $retainedUnrelated[0].Verdict | Should -BeExactly 'Unknown'
+        ([datetime]$retainedUnrelated[0].QueryDate).ToUniversalTime() |
+            Should -Be ([datetime]$unrelatedDate).ToUniversalTime()
+    }
+
+    It 'retains malicious evidence from deterministic concurrent null-to-bound writers with <Order> first' -ForEach @(
+        @{ Order = 'unbound'; CleanDelayMs = 250; MaliciousDelayMs = 0 }
+        @{ Order = 'bound'; CleanDelayMs = 0; MaliciousDelayMs = 250 }
+    ) {
+        $modulePath = Join-Path $PSScriptRoot '../../src/EndpointOps/EndpointOps.psd1'
+        $start = Join-Path $TestDrive "$Order-start"
+        $cleanReady = Join-Path $TestDrive "$Order-clean-ready"
+        $maliciousReady = Join-Path $TestDrive "$Order-malicious-ready"
+        $worker = {
+            param($ModulePath, $Path, $Lookup, $Canonical, $Source, $Verdict, $Ready, $Start, $DelayMs)
+            $ErrorActionPreference = 'Stop'
+            Import-Module $ModulePath -Force
+            [IO.File]::WriteAllText($Ready, '')
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            while (-not [IO.File]::Exists($Start)) {
+                if ($timer.ElapsedMilliseconds -ge 5000) { throw 'Start signal timed out' }
+                Start-Sleep -Milliseconds 20
+            }
+            if ($DelayMs -gt 0) { Start-Sleep -Milliseconds $DelayMs }
+            & (Get-Module EndpointOps) {
+                param($Path, $Lookup, $Canonical, $Source, $Verdict)
+                $candidate = [pscustomobject]@{
+                    HashUsed = $Lookup; HashSource = 'EPM'; Source = $Source
+                    Verdict = $Verdict; QueryDate = [datetime]::UtcNow
+                }
+                Write-ReputationCacheEntry -CachePath $Path -LookupHash $Lookup `
+                    -CanonicalSha256 $Canonical -SourceResult $candidate
+            } $Path $Lookup $Canonical $Source $Verdict
+        }
+        $jobs = @()
+        try {
+            $jobs += Start-Job -ScriptBlock $worker -ArgumentList $modulePath, $cachePath, $lookup, `
+                $canonical, 'VirusTotal', 'Clean', $cleanReady, $start, $CleanDelayMs
+            $jobs += Start-Job -ScriptBlock $worker -ArgumentList $modulePath, $cachePath, $lookup, `
+                $null, 'MalwareBazaar', 'Malicious', $maliciousReady, $start, $MaliciousDelayMs
+            Wait-IntegritySignal $cleanReady
+            Wait-IntegritySignal $maliciousReady
+            [IO.File]::WriteAllText($start, '')
+            $jobs | Wait-Job -Timeout 10 | Out-Null
+            $jobs.State | Should -Be @('Completed', 'Completed')
+            $jobs | Receive-Job -ErrorAction Stop
+
+            $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+            $entries.Count | Should -Be 2
+            @($entries | Where-Object Source -eq 'MalwareBazaar').Verdict |
+                Should -BeExactly 'Malicious'
+            @($entries).CanonicalSha256 | Should -Be @($canonical, $canonical)
         }
         finally { $jobs | Stop-Job; $jobs | Remove-Job -Force }
     }
@@ -963,5 +1089,34 @@ Describe 'Get-FileReputation reputation cache' {
         ($afterSessionHit - $before) | Should -Be 1
         ($afterReconnect - $before) | Should -Be 2
         (Test-Path -LiteralPath $cachePath) | Should -BeFalse
+    }
+
+    It '34. preserves unbound cached malicious evidence across a bound public refresh' {
+        $cachePath = Join-Path $TestDrive 'public-null-to-bound/reputation-cache.json'
+        $canonicalSha256 = ('A' * 62) + '01'
+        $queryReference = [datetime]::UtcNow
+        ConvertTo-TestReputationCacheFile -CachePath $cachePath -Entries @(
+            [pscustomobject][ordered]@{
+                Version = 2; LookupHash = $script:CleanHash; CanonicalSha256 = $null
+                Hash = $script:CleanHash; HashSource = 'EPM'; Source = 'MalwareBazaar'
+                Verdict = 'Malicious'; QueryDate = $queryReference.ToString('o')
+            }
+        )
+
+        $refresh = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -SkipCascade `
+            -UseCache -CachePath $cachePath -ReferenceDate $queryReference
+        $refresh.Verdict | Should -BeExactly 'Clean'
+        Initialize-ReputationCacheTestModule
+        $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+        $cached = Get-FileReputation -Hash $script:CleanHash -MinIntervalMs 0 -UseCache `
+            -CachePath $cachePath -ReferenceDate $queryReference.AddMinutes(1)
+
+        $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+        ($after - $before) | Should -Be 0
+        $cached.Verdict | Should -BeExactly 'Malicious'
+        @($cached.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar')
+        $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
+        @($entries).CanonicalSha256 | Should -Be @($canonicalSha256, $canonicalSha256)
     }
 }

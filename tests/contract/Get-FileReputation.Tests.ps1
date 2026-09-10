@@ -26,6 +26,7 @@ BeforeAll {
     $script:SkipHash = ('E' * 38) + '05'
     $script:UnavailableHash = ('F' * 38) + '06'
     $script:NoReliefHash = ('2' * 38) + '09'
+    $script:MismatchedAliasHash = ('4' * 38) + '11'
 
     function Get-ReputationRequestCount {
         [CmdletBinding()]
@@ -63,6 +64,87 @@ Describe 'Get-FileReputation' {
         Disconnect-MalwareBazaar
         if (Get-Command Disconnect-HybridAnalysis -ErrorAction SilentlyContinue) {
             Disconnect-HybridAnalysis
+        }
+    }
+
+    Context 'Cascade hash boundary' {
+        It 'Declares the EPM cascade hash as exactly one SHA-1 value' {
+            $parameter = (Get-Command Get-FileReputation).Parameters['Hash']
+            $pattern = @($parameter.Attributes | Where-Object { $_ -is [ValidatePattern] })[0]
+            $length = @($parameter.Attributes | Where-Object { $_ -is [ValidateLength] })[0]
+
+            $pattern.RegexPattern | Should -BeExactly '^[0-9A-Fa-f]{40}$'
+            $length.MinLength | Should -Be 40
+            $length.MaxLength | Should -Be 40
+        }
+
+        It 'Rejects <Case> before any reputation request' -ForEach @(
+            @{ Case = 'an MD5'; Hash = ('1' * 32) }
+            @{ Case = 'a SHA-256'; Hash = ('2' * 64) }
+            @{ Case = 'a non-hexadecimal 40-character value'; Hash = (('3' * 39) + 'G') }
+        ) {
+            $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+
+            { Get-FileReputation -Hash $Hash -MinIntervalMs 0 } |
+                Should -Throw -ExceptionType ([System.Management.Automation.ParameterBindingException])
+
+            $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            ($after - $before) | Should -Be 0
+        }
+
+        It 'Rejects a SHA-1 followed by LF before any provider request' {
+            $hashWithFinalLf = ('A' * 40) + [char]10
+            $before = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            $caughtException = $null
+
+            try {
+                Get-FileReputation -Hash $hashWithFinalLf -MinIntervalMs 0 | Out-Null
+            }
+            catch {
+                $caughtException = $_.Exception
+            }
+
+            $after = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            ($after - $before) | Should -Be 0
+            $caughtException | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
+        }
+
+        It 'Rejects a SHA-1 followed by LF before serving persistent cache evidence' {
+            $hashWithFinalLf = ('A' * 40) + [char]10
+            $referenceDate = [datetime]'2026-09-01T00:00:00Z'
+            $cachePath = Join-Path $TestDrive 'final-lf-boundary/reputation-cache.json'
+            New-Item -Path (Split-Path -Path $cachePath -Parent) -ItemType Directory -Force | Out-Null
+            $cacheJson = @(
+                [ordered]@{
+                    Version = 2
+                    LookupHash = $hashWithFinalLf
+                    CanonicalSha256 = $null
+                    Hash = $hashWithFinalLf
+                    HashSource = 'EPM'
+                    Source = 'VirusTotal'
+                    Verdict = 'Clean'
+                    QueryDate = $referenceDate.AddDays(-1).ToString('o')
+                }
+            ) | ConvertTo-Json -Depth 4
+            Set-Content -LiteralPath $cachePath -Value $cacheJson -Encoding utf8NoBOM -NoNewline
+            $beforeBytes = [System.IO.File]::ReadAllBytes($cachePath)
+            $beforeRequests = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            $caughtException = $null
+            $result = $null
+
+            try {
+                $result = Get-FileReputation -Hash $hashWithFinalLf -MinIntervalMs 0 -UseCache `
+                    -CachePath $cachePath -ReferenceDate $referenceDate
+            }
+            catch {
+                $caughtException = $_.Exception
+            }
+
+            $afterRequests = @((Invoke-RestMethod -Uri $script:JournalUri).requests).Count
+            $result | Should -BeNullOrEmpty
+            ($afterRequests - $beforeRequests) | Should -Be 0
+            [System.IO.File]::ReadAllBytes($cachePath) | Should -Be $beforeBytes
+            $caughtException | Should -BeOfType ([System.Management.Automation.ParameterBindingException])
         }
     }
 
@@ -248,6 +330,30 @@ Describe 'Get-FileReputation' {
             ($tfAfter - $tfBefore) | Should -Be 0
             @($result.Sources).Source | Should -Be @('VirusTotal', 'MalwareBazaar', 'HybridAnalysis')
             @($result.Sources).Source | Should -Not -Contain 'ThreatFox'
+        }
+
+        It 'Does not query ThreatFox when the VirusTotal SHA-256 is bound to another SHA-1' {
+            Connect-HybridAnalysis -ApiKey $script:HaKey -BaseUri $script:Server.BaseUrl | Out-Null
+            $mbBefore = Get-ReputationRequestCount -Path $script:MbPath
+            $haBefore = Get-ReputationRequestCount -Path $script:HaPath
+            $tfBefore = Get-ReputationRequestCount -Path $script:TfPath
+
+            $result = Get-FileReputation -Hash $script:MismatchedAliasHash -MinIntervalMs 0
+
+            $mbAfter = Get-ReputationRequestCount -Path $script:MbPath
+            $haAfter = Get-ReputationRequestCount -Path $script:HaPath
+            $tfAfter = Get-ReputationRequestCount -Path $script:TfPath
+            ($mbAfter - $mbBefore) | Should -Be 1
+            ($haAfter - $haBefore) | Should -Be 1
+            ($tfAfter - $tfBefore) | Should -Be 0
+            @($result.Sources).Source | Should -Be @(
+                'VirusTotal', 'MalwareBazaar', 'HybridAnalysis')
+            $ha = @($result.Sources | Where-Object Source -eq 'HybridAnalysis')
+            $ha.Count | Should -Be 1
+            $ha[0].HashUsed | Should -BeExactly $script:MismatchedAliasHash
+            $ha[0].HashSource | Should -BeExactly 'EPM'
+            @($result.Sources).Source | Should -Not -Contain 'ThreatFox'
+            $result.Verdict | Should -BeExactly 'Malicious'
         }
     }
 

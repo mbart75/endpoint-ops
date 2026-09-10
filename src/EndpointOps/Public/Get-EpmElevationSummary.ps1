@@ -113,7 +113,8 @@ function Get-EpmElevationSummary {
 
             # Count distinct publisher-and-hash pairs, not requests. This distinguishes repeated
             # launches of one installer from requests for several different tools.
-            [void]$line.Binaries.Add("$($eventRecord.Publisher)$([char]0x1F)$($eventRecord.Hash)")
+            $normalizedHash = ([string]$eventRecord.Hash).ToUpperInvariant()
+            [void]$line.Binaries.Add("$($eventRecord.Publisher)$([char]0x1F)$normalizedHash")
             [void]$line.Computers.Add($eventRecord.ComputerName)
 
             if ($null -ne $eventRecord.FirstEventDate -and
@@ -153,12 +154,13 @@ function Get-EpmElevationSummary {
     foreach ($eventRecord in $eventRecords) {
         # Use the ASCII unit separator (0x1F), not a dash: publishers and file names may contain
         # dashes, which could otherwise make different pairs produce the same key.
-        $groupingKey = "$($eventRecord.Publisher)$([char]0x1F)$($eventRecord.Hash)"
+        $normalizedHash = ([string]$eventRecord.Hash).ToUpperInvariant()
+        $groupingKey = "$($eventRecord.Publisher)$([char]0x1F)$normalizedHash"
 
         if (-not $groupBuckets.Contains($groupingKey)) {
             $groupBuckets[$groupingKey] = @{
                 Publisher   = $eventRecord.Publisher
-                Hash        = $eventRecord.Hash
+                Hash        = $normalizedHash
                 FileName    = $eventRecord.FileName
                 Users       = [System.Collections.Generic.HashSet[string]]::new()
                 Computers   = [System.Collections.Generic.HashSet[string]]::new()
