@@ -60,6 +60,55 @@ Describe 'Persistent cache atomic file replacement' {
         $bytes[0] | Should -Be 91
         @(Get-ChildItem -LiteralPath $TestDrive -Filter '*.tmp.*').Count | Should -Be 0
     }
+
+    It 'creates the content-bearing temporary file with owner-only Unix permissions' -Skip:$IsWindows {
+        $cachePath = Join-Path $TestDrive 'private-temporary.json'
+        [IO.File]::WriteAllText($cachePath, '[]')
+        [IO.File]::SetUnixFileMode($cachePath,
+            [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite)
+
+        Mock Move-ReputationCacheFile -ModuleName EndpointOps {
+            $mode = [IO.File]::GetUnixFileMode($SourcePath)
+            $publicBits = [IO.UnixFileMode]::GroupRead -bor [IO.UnixFileMode]::GroupWrite -bor `
+                [IO.UnixFileMode]::GroupExecute -bor [IO.UnixFileMode]::OtherRead -bor `
+                [IO.UnixFileMode]::OtherWrite -bor [IO.UnixFileMode]::OtherExecute
+            ($mode -band $publicBits) | Should -Be ([IO.UnixFileMode]::None)
+            [IO.File]::Move($SourcePath, $DestinationPath, $true)
+        }
+
+        & (Get-Module EndpointOps) {
+            param($Path)
+            Write-ReputationCacheFile -CachePath $Path -Entries @([pscustomobject]@{ Value = 'private' })
+        } $cachePath
+
+        [IO.File]::GetUnixFileMode($cachePath) | Should -Be (
+            [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite)
+    }
+
+    It 'creates a new Unix cache with owner-only permissions' -Skip:$IsWindows {
+        $cachePath = Join-Path $TestDrive 'new-private-cache.json'
+
+        & (Get-Module EndpointOps) {
+            param($Path)
+            Write-ReputationCacheFile -CachePath $Path -Entries @([pscustomobject]@{ Value = 'private' })
+        } $cachePath
+
+        [IO.File]::GetUnixFileMode($cachePath) | Should -Be (
+            [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite)
+    }
+
+    It 'preserves an existing Windows cache ACL during atomic replacement' -Skip:(-not $IsWindows) {
+        $cachePath = Join-Path $TestDrive 'preserved-acl.json'
+        [IO.File]::WriteAllText($cachePath, '[]')
+        $before = (Get-Acl -LiteralPath $cachePath).Sddl
+
+        & (Get-Module EndpointOps) {
+            param($Path)
+            Write-ReputationCacheFile -CachePath $Path -Entries @([pscustomobject]@{ Value = 'private' })
+        } $cachePath
+
+        (Get-Acl -LiteralPath $cachePath).Sddl | Should -BeExactly $before
+    }
 }
 
 Describe 'Strict cache file recognition' {

@@ -31,7 +31,7 @@ function Get-VtFileReport {
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
-        [ValidatePattern('^(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$')]
+        [ValidatePattern('^(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})\z')]
         [string]$Hash,
         [ValidateRange(0, 600000)][int]$MinIntervalMs = 15000
     )
