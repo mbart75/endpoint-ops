@@ -15,6 +15,7 @@ function Invoke-EndpointOpsHttpRequest {
         [int]$MaxAttempts = 4,
         [int]$TimeoutSec = 30,
         [double]$BackoffBaseSec = 1,
+        [ValidateRange(1, 3600)][double]$MaxRetryAfterSec = 60,
         [string]$Body
     )
 
@@ -67,10 +68,49 @@ function Invoke-EndpointOpsHttpRequest {
         }
 
         $wait = if ($status -eq 429 -and $response.Headers['Retry-After']) {
-            [double](@($response.Headers['Retry-After'])[0])
+            $rawRetryAfter = ([string]@($response.Headers['Retry-After'])[0]).Trim()
+            $deltaSeconds = 0L
+            if ($rawRetryAfter -match '^\d+$' -and [long]::TryParse(
+                    $rawRetryAfter,
+                    [System.Globalization.NumberStyles]::None,
+                    [System.Globalization.CultureInfo]::InvariantCulture,
+                    [ref]$deltaSeconds)) {
+                [double]$deltaSeconds
+            }
+            elseif ($rawRetryAfter -match '^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|NaN|Infinity)$') {
+                throw "EndpointOps: invalid Retry-After value returned by $Uri"
+            }
+            else {
+                $retryDate = [DateTimeOffset]::MinValue
+                $httpDateFormats = [string[]]@(
+                    "ddd, dd MMM yyyy HH':'mm':'ss 'GMT'",
+                    "dddd, dd-MMM-yy HH':'mm':'ss 'GMT'",
+                    "ddd MMM d HH':'mm':'ss yyyy"
+                )
+                $dateStyles = [System.Globalization.DateTimeStyles]::AllowWhiteSpaces -bor
+                    [System.Globalization.DateTimeStyles]::AssumeUniversal -bor
+                    [System.Globalization.DateTimeStyles]::AdjustToUniversal
+                $isHttpDate = [DateTimeOffset]::TryParseExact(
+                    $rawRetryAfter,
+                    $httpDateFormats,
+                    [System.Globalization.CultureInfo]::InvariantCulture,
+                    $dateStyles,
+                    [ref]$retryDate)
+                if (-not $isHttpDate) {
+                    throw "EndpointOps: invalid Retry-After value returned by $Uri"
+                }
+                [Math]::Max([double]0, ($retryDate - [DateTimeOffset]::UtcNow).TotalSeconds)
+            }
         }
         else {
             $BackoffBaseSec * [Math]::Pow(2, $attempt - 1)
+        }
+
+        if ([double]::IsNaN($wait) -or [double]::IsInfinity($wait) -or $wait -lt 0) {
+            throw "EndpointOps: invalid Retry-After value returned by $Uri"
+        }
+        if ($wait -gt $MaxRetryAfterSec) {
+            throw "EndpointOps: retry delay exceeds the $MaxRetryAfterSec second policy limit for $Uri"
         }
 
         Write-Verbose "Status $status; retrying in $wait s (attempt $attempt/$MaxAttempts)"

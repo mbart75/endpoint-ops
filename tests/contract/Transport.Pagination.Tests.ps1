@@ -43,4 +43,42 @@ Describe 'Invoke-EndpointOpsRequest - pagination' {
 
         ($after - $before) | Should -Be 2 -Because 'The mock server only displays two pages'
     }
+
+    It 'Stops after one real request when MaxPages is one' {
+        $before = Get-MockApiServerHitCount -Server $script:Server -Path '/agents'
+
+        {
+            Invoke-EndpointOpsRequest -Uri "$($script:Server.BaseUrl)/agents" -Paginate -MaxPages 1
+        } | Should -Throw -ExpectedMessage '*1 page limit*'
+
+        $after = Get-MockApiServerHitCount -Server $script:Server -Path '/agents'
+        ($after - $before) | Should -Be 1
+    }
+
+    Context 'Page-count guard' {
+        It 'Stops before requesting a page beyond MaxPages' {
+            InModuleScope EndpointOps {
+                $script:PageNumber = 0
+                Mock Invoke-EndpointOpsHttpRequest {
+                    $script:PageNumber++
+                    if ($script:PageNumber -gt 3) {
+                        throw 'Unexpected request beyond the configured page limit'
+                    }
+                    [pscustomobject]@{
+                        Content = (@{
+                                data = @(@{ id = "item-$script:PageNumber" })
+                                pagination = @{ nextCursor = "cursor-$script:PageNumber" }
+                            } | ConvertTo-Json -Depth 5)
+                    }
+                }
+
+                {
+                    Invoke-EndpointOpsRequest -Uri 'https://tenant.example.invalid/agents' `
+                        -Paginate -MaxPages 3
+                } | Should -Throw -ExpectedMessage '*3 page limit*'
+
+                Should -Invoke Invoke-EndpointOpsHttpRequest -Times 3 -Exactly
+            }
+        }
+    }
 }

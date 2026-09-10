@@ -45,6 +45,8 @@ Used for sets and policies. Source: [Get sets list](https://docs.cyberark.com/ep
 
 `limit` is 1–1000 with a default of 50; `offset` begins at 0. The documentation explicitly requires `offset` to be a whole-number multiple of `limit`. Increment offsets by `limit`; arbitrary increments can be rejected.
 
+Some offset routes expose `TotalCount`, while others omit it. When present, the first non-negative integer value is stable for the complete request and every later page must retain it. A response can also expose `FilteredCount`; it is accepted only alongside `TotalCount`, must remain stable, and becomes the result-size target without exceeding `TotalCount`. Collected items may not exceed the applicable target, and an empty page before reaching it is rejected as incomplete. A route that never exposes either count retains empty-page termination. Both offset and cursor pagination remain bounded by `MaxPages` (default 200, range 1-10000).
+
 ### Opaque cursor: `nextCursor`
 
 Used for events. Source: [Get policy audit raw event details](https://docs.cyberark.com/epm/latest/en/content/webservices/getpolicyauditraweventdetails.htm).
@@ -101,6 +103,8 @@ Both use filtered POST requests with cursor pagination. Confirmed useful fields 
 Source: [Automate tasks with EPM web services](https://docs.cyberark.com/epm/latest/en/content/webservices/webservicesintro.htm).
 
 The public documentation documents 30 API calls per minute for policy APIs but does not document an EPM equivalent of SentinelOne’s `Retry-After` behaviour. The module paces policy-detail calls proactively using `-MinIntervalMs` instead of relying on post-failure recovery. A 401 is detected as expired-session guidance; the current shared transport’s string-based error signalling is a known technical debt recorded in [technical decisions](decisions.md).
+
+All shared transport retries, including EPM requests, reject a computed or provider-directed wait above the local `MaxRetryAfterSec` policy instead of silently shortening it.
 
 ## 8. Hashes and download URLs
 

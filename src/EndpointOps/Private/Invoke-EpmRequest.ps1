@@ -49,6 +49,10 @@ function Invoke-EpmRequest {
     $offset      = 0
     $cursor      = 'start'
     $pageCount   = 0
+    $expectedTotalCount = $null
+    $expectedItemCount = $null
+    $hasTotalContract = $false
+    $hasFilteredContract = $false
 
     while ($true) {
         # Bound pagination even when a server keeps returning new cursors indefinitely.
@@ -111,11 +115,70 @@ function Invoke-EpmRequest {
         foreach ($item in $pageItems) { $items.Add($item) }
 
         if ($PaginationStyle -eq 'Offset') {
-            # An empty page is the termination condition when the endpoint does not expose TotalCount.
-            if ($pageItems.Count -eq 0) { break }
+            $hasPageTotal = $page.PSObject.Properties.Name -contains 'TotalCount'
+            if ($hasPageTotal) {
+                $parsedTotal = 0L
+                $isInteger = [long]::TryParse(
+                    [string]$page.TotalCount,
+                    [System.Globalization.NumberStyles]::Integer,
+                    [System.Globalization.CultureInfo]::InvariantCulture,
+                    [ref]$parsedTotal)
 
-            $totalCount = Get-PropertyOrDefault -InputObject $page -Name 'TotalCount'
-            if ($null -ne $totalCount -and $items.Count -ge [int]$totalCount) { break }
+                if (-not $isInteger -or $parsedTotal -lt 0) {
+                    throw "EndpointOps: invalid EPM TotalCount on $Path"
+                }
+                if (-not $hasTotalContract) {
+                    $expectedTotalCount = $parsedTotal
+                    $expectedItemCount = $parsedTotal
+                    $hasTotalContract = $true
+                }
+                elseif ($parsedTotal -ne $expectedTotalCount) {
+                    throw "EndpointOps: EPM TotalCount changed during pagination on $Path"
+                }
+            }
+            elseif ($hasTotalContract) {
+                throw "EndpointOps: EPM TotalCount disappeared during pagination on $Path"
+            }
+
+            $hasPageFilteredTotal = $page.PSObject.Properties.Name -contains 'FilteredCount'
+            if ($hasPageFilteredTotal) {
+                if (-not $hasPageTotal) {
+                    throw "EndpointOps: EPM FilteredCount requires TotalCount on $Path"
+                }
+                $parsedFilteredTotal = 0L
+                $isFilteredInteger = [long]::TryParse(
+                    [string]$page.FilteredCount,
+                    [System.Globalization.NumberStyles]::Integer,
+                    [System.Globalization.CultureInfo]::InvariantCulture,
+                    [ref]$parsedFilteredTotal)
+                if (-not $isFilteredInteger -or $parsedFilteredTotal -lt 0 -or
+                    ($hasTotalContract -and $parsedFilteredTotal -gt $expectedTotalCount)) {
+                    throw "EndpointOps: invalid EPM FilteredCount on $Path"
+                }
+                if (-not $hasFilteredContract) {
+                    $expectedItemCount = $parsedFilteredTotal
+                    $hasFilteredContract = $true
+                }
+                elseif ($parsedFilteredTotal -ne $expectedItemCount) {
+                    throw "EndpointOps: EPM FilteredCount changed during pagination on $Path"
+                }
+            }
+            elseif ($hasFilteredContract) {
+                throw "EndpointOps: EPM FilteredCount disappeared during pagination on $Path"
+            }
+
+            $hasApplicableCountContract = $hasFilteredContract -or $hasTotalContract
+            $applicableCountName = if ($hasFilteredContract) { 'FilteredCount' } else { 'TotalCount' }
+            if ($hasApplicableCountContract -and $items.Count -gt $expectedItemCount) {
+                throw "EndpointOps: EPM $applicableCountName contract violated by collected item count on $Path"
+            }
+            if ($pageItems.Count -eq 0) {
+                if ($hasApplicableCountContract -and $items.Count -lt $expectedItemCount) {
+                    throw "EndpointOps: EPM $applicableCountName contract is incomplete on $Path"
+                }
+                break
+            }
+            if ($hasApplicableCountContract -and $items.Count -eq $expectedItemCount) { break }
 
             # Advance by the requested limit, not the received item count. The API requires offsets
             # to remain multiples of the page size.
