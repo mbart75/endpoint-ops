@@ -13,7 +13,9 @@ function Invoke-EndpointOpsRequest {
         [int]$MaxAttempts = 4,
         [int]$TimeoutSec = 30,
         [double]$BackoffBaseSec = 1,
+        [ValidateRange(1, 3600)][double]$MaxRetryAfterSec = 60,
         [switch]$Paginate,
+        [ValidateRange(1, 10000)][int]$MaxPages = 200,
         [string]$ItemsProperty = 'data',
         [string]$CursorQueryParam = 'cursor',
         [string]$Body
@@ -25,6 +27,7 @@ function Invoke-EndpointOpsRequest {
         MaxAttempts    = $MaxAttempts
         TimeoutSec     = $TimeoutSec
         BackoffBaseSec = $BackoffBaseSec
+        MaxRetryAfterSec = $MaxRetryAfterSec
     }
 
     if ($PSBoundParameters.ContainsKey('Body') -and $Body) {
@@ -39,14 +42,19 @@ function Invoke-EndpointOpsRequest {
     $items   = [System.Collections.Generic.List[object]]::new()
     $nextUri = $Uri
     $seen    = [System.Collections.Generic.HashSet[string]]::new()
+    $pageCount = 0
 
     while ($nextUri) {
         # A previously seen cursor means the API is looping.
         if (-not $seen.Add($nextUri)) {
             throw "EndpointOps: repeated pagination cursor on $nextUri; stopped to avoid an infinite loop"
         }
+        if ($pageCount -ge $MaxPages) {
+            throw "EndpointOps: $MaxPages page limit reached on $Uri; pagination aborted"
+        }
 
         $page = (Invoke-EndpointOpsHttpRequest -Uri $nextUri @callArgs).Content | ConvertFrom-Json
+        $pageCount++
 
         foreach ($item in $page.$ItemsProperty) {
             $items.Add($item)

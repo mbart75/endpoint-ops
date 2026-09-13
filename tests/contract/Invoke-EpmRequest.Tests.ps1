@@ -108,6 +108,162 @@ Describe 'Invoke-EpmRequest' {
                     -PaginationStyle Offset -Limit 2 -MaxPages 6)
             @($items.id) | Should -Be @('et-1', 'et-2', 'et-3')
         }
+
+        It '<Name>' -TestCases @(
+            @{
+                Name = 'rejects more collected items than TotalCount'
+                Pages = @(
+                    [pscustomobject]@{ events = @(@{ id = 'a' }, @{ id = 'b' }); TotalCount = 1 }
+                )
+                Message = '*TotalCount*collected*'
+            }
+            @{
+                Name = 'rejects TotalCount changes between pages'
+                Pages = @(
+                    [pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3 }
+                    [pscustomobject]@{ events = @(@{ id = 'b' }); TotalCount = 2 }
+                )
+                Message = '*TotalCount*changed*'
+            }
+            @{
+                Name = 'rejects an empty page before TotalCount is reached'
+                Pages = @(
+                    [pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3 }
+                    [pscustomobject]@{ events = @(); TotalCount = 3 }
+                )
+                Message = '*TotalCount*incomplete*'
+            }
+            @{
+                Name = 'rejects TotalCount disappearing between pages'
+                Pages = @(
+                    [pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3 }
+                    [pscustomobject]@{ events = @(@{ id = 'b' }) }
+                )
+                Message = '*TotalCount*disappeared*'
+            }
+            @{
+                Name = 'rejects a negative TotalCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = -1 })
+                Message = '*invalid EPM TotalCount*'
+            }
+            @{
+                Name = 'rejects a fractional TotalCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 1.5 })
+                Message = '*invalid EPM TotalCount*'
+            }
+            @{
+                Name = 'rejects a non-numeric TotalCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 'not-a-number' })
+                Message = '*invalid EPM TotalCount*'
+            }
+        ) {
+            param($Pages, $Message)
+
+            $script:EpmContractPages = [System.Collections.Generic.Queue[object]]::new()
+            foreach ($contractPage in $Pages) { $script:EpmContractPages.Enqueue($contractPage) }
+            Mock Invoke-EndpointOpsRequest { $script:EpmContractPages.Dequeue() }
+
+            $errorMessage = ''
+            try {
+                Invoke-EpmRequest -Path '/EPM/API/_test/contract' -Method Post `
+                    -Body '{"secret":"BODY-LEAK"}' -PaginationStyle Offset -Limit 1 | Out-Null
+            }
+            catch { $errorMessage = $_.Exception.Message }
+
+            $errorMessage | Should -BeLike $Message
+            $errorMessage | Should -Not -BeLike '*MOCK-EPM-TOKEN*'
+            $errorMessage | Should -Not -BeLike '*BODY-LEAK*'
+        }
+
+        It '<Name>' -TestCases @(
+            @{
+                Name = 'uses a valid FilteredCount as the completion target'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = 1 })
+                Message = $null
+            }
+            @{
+                Name = 'rejects a negative FilteredCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = -1 })
+                Message = '*invalid EPM FilteredCount*'
+            }
+            @{
+                Name = 'rejects FilteredCount above TotalCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = 4 })
+                Message = '*invalid EPM FilteredCount*'
+            }
+            @{
+                Name = 'rejects a non-numeric FilteredCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = 'bad' })
+                Message = '*invalid EPM FilteredCount*'
+            }
+            @{
+                Name = 'rejects FilteredCount changes between pages'
+                Pages = @(
+                    [pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = 2 }
+                    [pscustomobject]@{ events = @(@{ id = 'b' }); TotalCount = 3; FilteredCount = 1 }
+                )
+                Message = '*FilteredCount*changed*'
+            }
+            @{
+                Name = 'rejects FilteredCount disappearing between pages'
+                Pages = @(
+                    [pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = 2 }
+                    [pscustomobject]@{ events = @(@{ id = 'b' }); TotalCount = 3 }
+                )
+                Message = '*FilteredCount*disappeared*'
+            }
+            @{
+                Name = 'rejects FilteredCount without TotalCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); FilteredCount = 1 })
+                Message = '*FilteredCount*requires*TotalCount*'
+            }
+            @{
+                Name = 'rejects a null FilteredCount'
+                Pages = @([pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = $null })
+                Message = '*invalid EPM FilteredCount*'
+            }
+            @{
+                Name = 'names FilteredCount when collected items exceed the filtered target'
+                Pages = @(
+                    [pscustomobject]@{
+                        events = @(@{ id = 'a' }, @{ id = 'b' })
+                        TotalCount = 3
+                        FilteredCount = 1
+                    }
+                )
+                Message = '*FilteredCount*collected*'
+            }
+            @{
+                Name = 'names FilteredCount when an empty page precedes the filtered target'
+                Pages = @(
+                    [pscustomobject]@{ events = @(@{ id = 'a' }); TotalCount = 3; FilteredCount = 2 }
+                    [pscustomobject]@{ events = @(); TotalCount = 3; FilteredCount = 2 }
+                )
+                Message = '*FilteredCount*incomplete*'
+            }
+        ) {
+            param($Pages, $Message)
+
+            $script:EpmFilteredPages = [System.Collections.Generic.Queue[object]]::new()
+            foreach ($filteredPage in $Pages) { $script:EpmFilteredPages.Enqueue($filteredPage) }
+            Mock Invoke-EndpointOpsRequest { $script:EpmFilteredPages.Dequeue() }
+
+            $errorMessage = ''
+            try {
+                $result = @(Invoke-EpmRequest -Path '/EPM/API/_test/filtered-contract' `
+                        -PaginationStyle Offset -Limit 1)
+            }
+            catch { $errorMessage = $_.Exception.Message }
+
+            if ($null -eq $Message) {
+                $errorMessage | Should -BeNullOrEmpty
+                @($result.id) | Should -Be @('a')
+            }
+            else {
+                $errorMessage | Should -BeLike $Message
+                $errorMessage | Should -Not -BeLike '*MOCK-EPM-TOKEN*'
+            }
+        }
     }
 
     Context 'Pagination by cursor' {

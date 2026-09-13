@@ -22,6 +22,10 @@
 
 The mock server exercises both plausible terminal-page forms: a missing `pagination` property and `nextCursor: null`. This defensive handling is intentional; it is not evidence that either form is the product’s confirmed behaviour.
 
+`Invoke-EndpointOpsRequest -Paginate` limits each cursor walk to `MaxPages` requests (default 200, range 1-10000). The guard stops before sending a request beyond that limit; `MaxPages` does not affect a non-paginated call. Repeated-cursor detection remains the more specific error when both guards meet at the same boundary.
+
+Retry pacing is also a local policy. `MaxRetryAfterSec` defaults to 60 seconds (range 1-3600) and applies to both exponential backoff and provider-directed waits. `Retry-After` accepts integer delta-seconds and HTTP-date forms. Past dates become a zero-second wait; malformed, fractional, negative, non-finite, or excessive values fail before sleeping. Errors identify the invalid contract and request URI without reproducing the raw header value.
+
 The module consumes agent fields including `id`, `computerName`, `osName`, `osRevision`, `isActive`, `isDecommissioned`, and `lastActiveDate`; exclusion fields including `id`, `type`, `value`, `description`, `scope`, `createdBy`, and `updatedBy`; and Device Control fields including `id`, `ruleName`, `action`, `matchBy`, `vendorId`, `productId`, `deviceClass`, and provenance properties. Defensive property access allows an absent optional field to degrade output instead of terminating the module.
 
 ## CyberArk EPM Web Services SDK

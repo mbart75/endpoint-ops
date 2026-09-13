@@ -33,7 +33,7 @@ Layer 1  Transport          Invoke-EndpointOpsRequest
 
 | Area | Commands | Purpose |
 |---|---|---|
-| Shared transport | `Invoke-EndpointOpsRequest`, `Get-EndpointOpsVersion` | HTTP requests with retries, backoff, timeouts, and SentinelOne cursor pagination. |
+| Shared transport | `Invoke-EndpointOpsRequest`, `Get-EndpointOpsVersion` | HTTP requests with retries, backoff, timeouts, and SentinelOne cursor pagination. Pagination and retry waits are bounded by caller-configurable local policy. |
 | SentinelOne connection and queries | `Connect-S1Tenant`, `Disconnect-S1Tenant`, `Get-S1Agent`, `Get-S1Exclusion`, `Get-S1DeviceControlRule`, `Get-S1DeviceControlEvent` | Retrieve endpoint, exclusion, and Device Control information. HTTPS is required except for local mock-server addresses. |
 | SentinelOne review workflows | `Get-S1FleetHygieneReport`, `Get-S1ExclusionRiskReport`, `Get-S1DeviceControlRiskReport`, `Get-S1UnusedAuthorizationReport` | Produce explainable findings for endpoint hygiene, broad exclusions, permissive device rules, and unused authorizations. |
 | SentinelOne remediation | `Invoke-S1FleetRemediation` | The module’s only remote product write command. It can only perform stage-one movement to a tracking group and uses `ShouldProcess`. |

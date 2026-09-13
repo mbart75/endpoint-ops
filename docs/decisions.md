@@ -94,3 +94,8 @@ This document records implementation trade-offs, rationale, and known costs. It 
 55. **Separate allowed usage from blocked demand.** A blocked event can show need or impact after a rule change, but it is not evidence that an active allow rule was used.
 56. **Require logging coverage before inferring non-use.** Public product material describes approved-device activity reporting as configurable. `NoObservedUsage` therefore requires evidence that qualifying allowed events were logged throughout the observation window.
 57. **Snapshots are evidence, not restorable policy.** A read-only rule snapshot may support later impact analysis after deletion. The module must never treat it as authority to restore or recreate a rule automatically.
+
+## Transport preventive controls
+
+58. **Reject excessive retry instructions instead of capping them.** Silently shortening `Retry-After` would claim to honor provider pacing while retrying earlier than directed. The shared transport rejects malformed, non-finite, negative, or policy-exceeding waits before sleeping and keeps the raw header out of errors.
+59. **Treat EPM totals as a stable response contract.** Once an offset route exposes `TotalCount`, every later page must expose the same non-negative integer. A present `FilteredCount` requires that stable upper contract, is itself validated and stable, and becomes the result-size target because EPM policy search reports the unfiltered catalog in `TotalCount`. Contradictions fail closed; routes that expose neither count continue to terminate on an empty page.
