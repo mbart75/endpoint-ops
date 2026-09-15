@@ -298,8 +298,8 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
                             $script:HaKeyPattern)) {
                         foreach ($match in [regex]::Matches($line, $pattern)) {
                             $value = $match.Groups['value'].Value
-                            if (-not $isTest -or $value -notin $script:AllowedTestLiterals) {
-                                $findings.Add("$($file.FullName):${lineNumber}:$value")
+                            if (-not $isTest -or $value -cnotin $script:AllowedTestLiterals) {
+                                $findings.Add("$($file.FullName):${lineNumber}:ProviderKeyPattern")
                             }
                         }
                     }
@@ -336,40 +336,52 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
                         }
                     }
 
-                    if ([string]::IsNullOrWhiteSpace($commandName)) {
-                        continue
+                    $isDynamicInvocation = [string]::IsNullOrWhiteSpace($commandName) -and
+                        $command.InvocationOperator -eq
+                            [System.Management.Automation.Language.TokenKind]::Ampersand
+                    $parameterNames = if ($isDynamicInvocation) {
+                        @('ApiKey', 'AuthKey')
+                    }
+                    elseif (-not [string]::IsNullOrWhiteSpace($commandName)) {
+                        $terminalCommandName = $commandName.Substring($commandName.LastIndexOf([char]92) + 1)
+                        if ($script:ConnectSecretParameters.ContainsKey($terminalCommandName)) {
+                            @($script:ConnectSecretParameters[$terminalCommandName])
+                        }
+                        else {
+                            @()
+                        }
+                    }
+                    else {
+                        @()
                     }
 
-                    $terminalCommandName = $commandName.Substring($commandName.LastIndexOf([char]92) + 1)
-                    if (-not $script:ConnectSecretParameters.ContainsKey($terminalCommandName)) {
-                        continue
-                    }
+                    foreach ($parameterName in $parameterNames) {
+                        for ($index = 1; $index -lt $command.CommandElements.Count; $index++) {
+                            $element = $command.CommandElements[$index]
+                            if ($element -isnot [System.Management.Automation.Language.CommandParameterAst] -or
+                                $element.ParameterName -ne $parameterName) {
+                                continue
+                            }
 
-                    $parameterName = $script:ConnectSecretParameters[$terminalCommandName]
-                    for ($index = 1; $index -lt $command.CommandElements.Count; $index++) {
-                        $element = $command.CommandElements[$index]
-                        if ($element -isnot [System.Management.Automation.Language.CommandParameterAst] -or
-                            $element.ParameterName -ne $parameterName) {
-                            continue
-                        }
+                            $argument = $element.Argument
+                            if ($null -eq $argument -and $index + 1 -lt $command.CommandElements.Count) {
+                                $argument = $command.CommandElements[$index + 1]
+                            }
 
-                        $argument = $element.Argument
-                        if ($null -eq $argument -and $index + 1 -lt $command.CommandElements.Count) {
-                            $argument = $command.CommandElements[$index + 1]
-                        }
+                            $value = $null
+                            if ($argument -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                                $value = [string]$argument.Value
+                            }
+                            elseif ($argument -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and
+                                @($argument.NestedExpressions).Count -eq 0) {
+                                $value = [string]$argument.Value
+                            }
 
-                        $value = $null
-                        if ($argument -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
-                            $value = [string]$argument.Value
-                        }
-                        elseif ($argument -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and
-                            @($argument.NestedExpressions).Count -eq 0) {
-                            $value = [string]$argument.Value
-                        }
-
-                        if (-not [string]::IsNullOrWhiteSpace($value) -and
-                            (-not $isTest -or $value -notin $script:AllowedTestLiterals)) {
-                            $findings.Add("$($file.FullName):$($argument.Extent.StartLineNumber):$value")
+                            if (-not [string]::IsNullOrWhiteSpace($value) -and
+                                (-not $isTest -or $value -cnotin $script:AllowedTestLiterals)) {
+                                $findings.Add(
+                                    "$($file.FullName):$($argument.Extent.StartLineNumber):$($parameterName)Literal")
+                            }
                         }
                     }
                 }
@@ -458,21 +470,90 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
             [System.IO.FileInfo]$sourcePath,
             [System.IO.FileInfo]$outsideTestsPath)
         $findingText = $findings -join "`n"
-        $testFindingText = @($findings | Where-Object { $_ -match 'scanner-fixtures.ps1' }) -join "`n"
 
         $findings.Count | Should -Be 7
-        $findingText | Should -Match 'NON-FIXTURE-KEY'
-        $findingText | Should -Match 'WRONG-MB-KEY-LEAK'
-        $findingText | Should -Match 'UNAPPROVED-VT-KEY'
-        $findingText | Should -Match 'WRONG-VT-KEY-LEAK'
-        $findingText | Should -Match 'scanner-source.ps1.*MOCK-MB-KEY'
-        $findingText | Should -Match 'scanner-source.ps1.*WRONG-VT-KEY'
-        $findingText | Should -Match 'scanner-outside-tests.ps1.*MOCK-HA-KEY'
-        $testFindingText | Should -Not -Match 'MOCK-HA-KEY'
-        $findingText | Should -Not -Match 'MOCK-VT-KEY'
-        $testFindingText | Should -Not -Match 'WRONG-MB-KEY$'
-        $testFindingText | Should -Not -Match 'WRONG-VT-KEY$'
+        $findingText | Should -Match 'scanner-fixtures.ps1:1:ProviderKeyPattern'
+        $findingText | Should -Match 'scanner-fixtures.ps1:2:ProviderKeyPattern'
+        $findingText | Should -Match 'scanner-fixtures.ps1:3:ProviderKeyPattern'
+        $findingText | Should -Match 'scanner-fixtures.ps1:4:ProviderKeyPattern'
+        $findingText | Should -Match 'scanner-source.ps1:1:ProviderKeyPattern'
+        $findingText | Should -Match 'scanner-source.ps1:2:ProviderKeyPattern'
+        $findingText | Should -Match 'scanner-outside-tests.ps1:1:ProviderKeyPattern'
+        foreach ($literal in @(
+                'NON-FIXTURE-KEY',
+                'WRONG-MB-KEY-LEAK',
+                'UNAPPROVED-VT-KEY',
+                'WRONG-VT-KEY-LEAK',
+                'MOCK-MB-KEY',
+                'MOCK-VT-KEY',
+                'WRONG-MB-KEY',
+                'WRONG-VT-KEY',
+                'MOCK-HA-KEY')) {
+            $findingText | Should -Not -Match ([regex]::Escape($literal))
+        }
         $findingText | Should -Not -Match (('a' * 63) + 'b')
+    }
+
+    It 'redacts a source-tree text-pattern finding' {
+        $sourceDirectory = Join-Path $TestDrive 'src'
+        $testPath = Join-Path $sourceDirectory 'scanner-text-redaction.ps1'
+        New-Item -ItemType Directory -Path $sourceDirectory -Force | Out-Null
+        Set-Content -LiteralPath $testPath -Value `
+            (("@{|'Auth-Key'|=|'TEXT-REDACTION-SYNTHETIC'|}") -replace '\|', ' ') `
+            -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 1
+        $findingText | Should -Match 'scanner-text-redaction.ps1:1:ProviderKeyPattern'
+        $findingText | Should -Not -Match 'TEXT-REDACTION-SYNTHETIC'
+    }
+
+    It 'redacts a resolved-command AST finding' {
+        $sourceDirectory = Join-Path $TestDrive 'src'
+        $testPath = Join-Path $sourceDirectory 'scanner-ast-redaction.ps1'
+        New-Item -ItemType Directory -Path $sourceDirectory -Force | Out-Null
+        Set-Content -LiteralPath $testPath -Value `
+            "EndpointOps\Connect-VirusTotal -ApiKey 'AST-REDACTION-SYNTHETIC'" `
+            -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 1
+        $findingText | Should -Match 'scanner-ast-redaction.ps1:1:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'AST-REDACTION-SYNTHETIC'
+    }
+
+    It 'flags a case-variant textual fixture under tests' {
+        $testDirectory = Join-Path $TestDrive 'tests'
+        $testPath = Join-Path $testDirectory 'scanner-case-variant-text.ps1'
+        New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
+        Set-Content -LiteralPath $testPath -Value `
+            (("@{|'x-apikey'|=|'mock-vt-key'|}") -replace '\|', ' ') -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 1
+        $findingText | Should -Match 'scanner-case-variant-text.ps1:1:ProviderKeyPattern'
+        $findingText | Should -Not -Match 'mock-vt-key'
+    }
+
+    It 'flags a case-variant AST fixture under tests' {
+        $testDirectory = Join-Path $TestDrive 'tests'
+        $testPath = Join-Path $testDirectory 'scanner-case-variant-ast.ps1'
+        New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
+        Set-Content -LiteralPath $testPath -Value `
+            "EndpointOps\Connect-VirusTotal -ApiKey 'mock-vt-key'" -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 1
+        $findingText | Should -Match 'scanner-case-variant-ast.ps1:1:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'mock-vt-key'
     }
 
     It 'flags all three multiline Connect sinks with a literal argument' {
@@ -498,9 +579,12 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
         $findingText = $findings -join "`n"
 
         $findings.Count | Should -Be 3
-        $findingText | Should -Match 'MULTILINE-VT-SECRET'
-        $findingText | Should -Match 'MULTILINE-MB-SECRET'
-        $findingText | Should -Match 'MULTILINE-HA-SECRET'
+        $findingText | Should -Match 'scanner-multiline.ps1:3:ApiKeyLiteral'
+        $findingText | Should -Match 'scanner-multiline.ps1:5:AuthKeyLiteral'
+        $findingText | Should -Match 'scanner-multiline.ps1:7:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'MULTILINE-VT-SECRET'
+        $findingText | Should -Not -Match 'MULTILINE-MB-SECRET'
+        $findingText | Should -Not -Match 'MULTILINE-HA-SECRET'
     }
 
     It 'flags module-qualified literal Connect secrets for all three providers' {
@@ -520,9 +604,12 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
         $findingText = $findings -join "`n"
 
         $findings.Count | Should -Be 3
-        $findingText | Should -Match 'MODULE-VT-SECRET'
-        $findingText | Should -Match 'MODULE-MB-SECRET'
-        $findingText | Should -Match 'MODULE-HA-SECRET'
+        $findingText | Should -Match 'scanner-module-qualified.ps1:1:ApiKeyLiteral'
+        $findingText | Should -Match 'scanner-module-qualified.ps1:2:AuthKeyLiteral'
+        $findingText | Should -Match 'scanner-module-qualified.ps1:3:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'MODULE-VT-SECRET'
+        $findingText | Should -Not -Match 'MODULE-MB-SECRET'
+        $findingText | Should -Not -Match 'MODULE-HA-SECRET'
     }
 
     It 'keeps the fixture exception inside tests for module-qualified sinks' {
@@ -546,8 +633,10 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
         $findingText = $findings -join "`n"
 
         $findings.Count | Should -Be 2
-        $findingText | Should -Match 'WRONG-MB-KEY-LEAK'
-        $findingText | Should -Match 'scanner-module-source.ps1.*MOCK-HA-KEY'
+        $findingText | Should -Match 'scanner-module-fixtures.ps1:2:AuthKeyLiteral'
+        $findingText | Should -Match 'scanner-module-source.ps1:1:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'WRONG-MB-KEY-LEAK'
+        $findingText | Should -Not -Match 'MOCK-HA-KEY'
         $findingText | Should -Not -Match 'MOCK-VT-KEY'
     }
 
@@ -566,11 +655,12 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
         $findingText = $findings -join "`n"
 
         $findings.Count | Should -Be 1
-        $findingText | Should -Match 'PARENTHESIZED-HA-SECRET'
+        $findingText | Should -Match 'scanner-parenthesized-static.ps1:1:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'PARENTHESIZED-HA-SECRET'
     }
 
-    It 'leaves dynamic command expressions unresolved without parser failures' {
-        $testPath = Join-Path $TestDrive 'scanner-dynamic-command.ps1'
+    It 'flags an ApiKey literal passed through a dynamic invocation' {
+        $testPath = Join-Path $TestDrive 'scanner-dynamic-apikey.ps1'
         Set-Content -LiteralPath $testPath -Value @(
             '$commandName = "EndpointOps\Connect-VirusTotal"'
             "& `$commandName -ApiKey 'DYNAMIC-VT-LITERAL'"
@@ -582,8 +672,101 @@ Describe '8. PowerShell files contain no hardcoded reputation secrets' {
         $parseErrors | Should -BeNullOrEmpty
 
         $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 1
+        $findingText | Should -Match 'scanner-dynamic-apikey.ps1:2:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'DYNAMIC-VT-LITERAL'
+    }
+
+    It 'flags an AuthKey literal passed through a dynamic invocation' {
+        $testPath = Join-Path $TestDrive 'scanner-dynamic-authkey.ps1'
+        Set-Content -LiteralPath $testPath -Value @(
+            '$commandName = "EndpointOps\Connect-MalwareBazaar"'
+            "& `$commandName -AuthKey 'DYNAMIC-MB-LITERAL'"
+        ) -Encoding utf8NoBOM
+
+        $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile(
+            $testPath, [ref]$null, [ref]$parseErrors)
+        $parseErrors | Should -BeNullOrEmpty
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 1
+        $findingText | Should -Match 'scanner-dynamic-authkey.ps1:2:AuthKeyLiteral'
+        $findingText | Should -Not -Match 'DYNAMIC-MB-LITERAL'
+    }
+
+    It 'does not flag a variable ApiKey argument at a dynamic invocation' {
+        $testPath = Join-Path $TestDrive 'scanner-dynamic-variable.ps1'
+        Set-Content -LiteralPath $testPath -Value @(
+            '$commandName = "EndpointOps\Connect-VirusTotal"'
+            '$apiKey = Read-Host -AsSecureString'
+            '& $commandName -ApiKey $apiKey'
+        ) -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
 
         $findings | Should -Be @()
+    }
+
+    It 'does not flag a runtime expression AuthKey argument at a dynamic invocation' {
+        $testPath = Join-Path $TestDrive 'scanner-dynamic-expression.ps1'
+        Set-Content -LiteralPath $testPath -Value @(
+            '$commandName = "EndpointOps\Connect-MalwareBazaar"'
+            '& $commandName -AuthKey (Get-SecretFromApprovedRuntimeSource)'
+        ) -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+
+        $findings | Should -Be @()
+    }
+
+    It 'does not flag a literal ApiKey argument on an unrelated resolved command' {
+        $testPath = Join-Path $TestDrive 'scanner-unrelated-command.ps1'
+        Set-Content -LiteralPath $testPath -Value `
+            "Invoke-UnrelatedTool -ApiKey 'NOT-A-CONNECTION-SECRET'" -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @([System.IO.FileInfo]$testPath)
+
+        $findings | Should -Be @()
+    }
+
+    It 'limits exact dynamic fixture exemptions to files under tests' {
+        $testDirectory = Join-Path $TestDrive 'tests'
+        $sourceDirectory = Join-Path $TestDrive 'src'
+        $allowedTestPath = Join-Path $testDirectory 'scanner-dynamic-allowed.ps1'
+        $variantTestPath = Join-Path $testDirectory 'scanner-dynamic-variant.ps1'
+        $sourcePath = Join-Path $sourceDirectory 'scanner-dynamic-source.ps1'
+        New-Item -ItemType Directory -Path $testDirectory -Force | Out-Null
+        New-Item -ItemType Directory -Path $sourceDirectory -Force | Out-Null
+
+        Set-Content -LiteralPath $allowedTestPath -Value @(
+            '$commandName = "EndpointOps\Connect-VirusTotal"'
+            "& `$commandName -ApiKey 'MOCK-VT-KEY'"
+        ) -Encoding utf8NoBOM
+        Set-Content -LiteralPath $variantTestPath -Value @(
+            '$commandName = "EndpointOps\Connect-VirusTotal"'
+            "& `$commandName -ApiKey 'MOCK-VT-KEY-LEAK'"
+        ) -Encoding utf8NoBOM
+        Set-Content -LiteralPath $sourcePath -Value @(
+            '$commandName = "EndpointOps\Connect-VirusTotal"'
+            "& `$commandName -ApiKey 'MOCK-VT-KEY'"
+        ) -Encoding utf8NoBOM
+
+        $findings = Find-ReputationHardcodedSecret -Files @(
+            [System.IO.FileInfo]$allowedTestPath,
+            [System.IO.FileInfo]$variantTestPath,
+            [System.IO.FileInfo]$sourcePath)
+        $findingText = $findings -join "`n"
+
+        $findings.Count | Should -Be 2
+        $findingText | Should -Match 'scanner-dynamic-variant.ps1:2:ApiKeyLiteral'
+        $findingText | Should -Match 'scanner-dynamic-source.ps1:2:ApiKeyLiteral'
+        $findingText | Should -Not -Match 'MOCK-VT-KEY-LEAK'
+        $findingText | Should -Not -Match 'MOCK-VT-KEY'
     }
 
     It 'finds no hardcoded reputation key in PowerShell files' {

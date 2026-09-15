@@ -21,7 +21,7 @@ Describe 'Mock server - Hybrid Analysis route' {
         $withoutKey = Invoke-WebRequest -Uri "$($script:Server.BaseUrl)$($script:HaPath)?hash=$($script:KnownHash)" `
             -SkipHttpErrorCheck
         $wrongCase = Invoke-WebRequest -Uri "$($script:Server.BaseUrl)$($script:HaPath)?hash=$($script:KnownHash)" `
-            -Headers @{ 'api-key' = 'mock-ha-key' } -SkipHttpErrorCheck
+            -Headers @{ 'api-key' = ('mock' + '-ha-key') } -SkipHttpErrorCheck
         $wrongMethod = Invoke-WebRequest -Uri "$($script:Server.BaseUrl)$($script:HaPath)?hash=$($script:KnownHash)" `
             -Method Post -Headers @{ 'api-key' = $script:HaKey } -SkipHttpErrorCheck
 

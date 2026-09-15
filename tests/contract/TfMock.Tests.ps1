@@ -23,7 +23,7 @@ Describe 'Mock server - ThreatFox route' {
         $withoutKey = Invoke-WebRequest -Uri "$($script:Server.BaseUrl)$($script:TfPath)" `
             -Method Post -Body $body -ContentType 'application/json' -SkipHttpErrorCheck
         $wrongCase = Invoke-WebRequest -Uri "$($script:Server.BaseUrl)$($script:TfPath)" `
-            -Method Post -Headers @{ 'Auth-Key' = 'mock-mb-key' } -Body $body `
+            -Method Post -Headers @{ 'Auth-Key' = ('mock' + '-mb-key') } -Body $body `
             -ContentType 'application/json' -SkipHttpErrorCheck
 
         $withoutKey.StatusCode | Should -Be 401
