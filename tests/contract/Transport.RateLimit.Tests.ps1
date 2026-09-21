@@ -77,16 +77,13 @@ Describe 'Invoke-EndpointOpsRequest - rate limiting' {
             }
         }
 
-        It 'Honors a future HTTP date within policy' {
+        It 'Honors a future HTTP date against a controlled UTC clock' {
             InModuleScope EndpointOps {
                 $script:RetryCall = 0
-                do {
-                    $phase = [DateTimeOffset]::UtcNow
-                    if ($phase.Millisecond -lt 600 -or $phase.Millisecond -gt 650) {
-                        [System.Threading.Thread]::Sleep(5)
-                    }
-                } until ($phase.Millisecond -ge 600 -and $phase.Millisecond -le 650)
-                $script:FutureRetryDate = $phase.AddSeconds(20).ToString('R')
+                $script:FrozenNow = [DateTimeOffset]::new(
+                    2020, 1, 1, 0, 0, 0, [TimeSpan]::Zero).AddMilliseconds(500)
+                $script:FutureRetryDate = $script:FrozenNow.AddSeconds(20).ToString('R')
+                Mock Get-EndpointOpsUtcNow { $script:FrozenNow }
                 Mock Invoke-WebRequest {
                     $script:RetryCall++
                     if ($script:RetryCall -eq 1) {
@@ -103,7 +100,7 @@ Describe 'Invoke-EndpointOpsRequest - rate limiting' {
                     -MaxAttempts 2 -MaxRetryAfterSec 60 | Out-Null
 
                 Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter {
-                    $Seconds -is [double] -and $Seconds -gt 19 -and $Seconds -le 20
+                    $Seconds -is [double] -and $Seconds -eq 19.5
                 }
                 Should -Invoke Invoke-WebRequest -Times 2 -Exactly
             }
@@ -164,14 +161,10 @@ Describe 'Invoke-EndpointOpsRequest - rate limiting' {
 
         It 'Does not round a fractional HTTP-date delay below the policy limit' {
             InModuleScope EndpointOps {
-                do {
-                    $phase = [DateTimeOffset]::UtcNow
-                    if ($phase.Millisecond -lt 550 -or $phase.Millisecond -gt 650) {
-                        [System.Threading.Thread]::Sleep(5)
-                    }
-                } until ($phase.Millisecond -ge 550 -and $phase.Millisecond -le 650)
-
-                $script:NearLimitRetryDate = $phase.AddSeconds(61).ToString('R')
+                $script:FrozenNow = [DateTimeOffset]::new(
+                    2020, 1, 1, 0, 0, 0, [TimeSpan]::Zero).AddMilliseconds(500)
+                $script:NearLimitRetryDate = $script:FrozenNow.AddSeconds(61).ToString('R')
+                Mock Get-EndpointOpsUtcNow { $script:FrozenNow }
                 Mock Invoke-WebRequest {
                     [pscustomobject]@{
                         StatusCode = 429

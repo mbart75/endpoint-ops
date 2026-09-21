@@ -99,7 +99,7 @@ function Invoke-EndpointOpsHttpRequest {
                 if (-not $isHttpDate) {
                     throw "EndpointOps: invalid Retry-After value returned by $Uri"
                 }
-                [Math]::Max([double]0, ($retryDate - [DateTimeOffset]::UtcNow).TotalSeconds)
+                [Math]::Max([double]0, ($retryDate - (Get-EndpointOpsUtcNow)).TotalSeconds)
             }
         }
         else {
