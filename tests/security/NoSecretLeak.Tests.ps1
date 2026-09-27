@@ -3,7 +3,8 @@ BeforeAll {
     Remove-Module EndpointOps -Force -ErrorAction SilentlyContinue
     Import-Module (Join-Path $PSScriptRoot '..' '..' 'src' 'EndpointOps' 'EndpointOps.psd1') -Force -ErrorAction Stop
     $script:Server = Start-MockApiServer
-    $script:Token  = 'ApiToken TOKEN-WHO-NEVER-SHOULD-APPEAR'
+    $script:TokenValue = 'TOKEN-WHO-NEVER-SHOULD-APPEAR'
+    $script:Token = "ApiToken $($script:TokenValue)"
 }
 
 AfterAll {
@@ -14,9 +15,12 @@ AfterAll {
 Describe 'Non-disclosure of the token' {
     It 'Does not expose the token in the verbose stream' {
         $verbose = Invoke-EndpointOpsRequest -Uri "$($script:Server.BaseUrl)/health" `
-            -Headers @{ Authorization = $script:Token } -Verbose 4>&1 | Out-String
+            -Headers @{ Authorization = $script:Token } -Verbose 4>&1 |
+            Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | Out-String
 
-        $verbose | Should -Not -Match 'TOKEN-THAT-NEVER-SHOULD-APPEAR'
+        $verbose | Should -Not -BeNullOrEmpty
+        $verbose | Should -Match 'Authorization'
+        $verbose | Should -Not -Match ([regex]::Escape($script:TokenValue))
     }
 
     It 'Logs the header name rather than its value' {
@@ -27,13 +31,16 @@ Describe 'Non-disclosure of the token' {
     }
 
     It 'Does not expose the token in a failed request error' {
-        $message = try {
+        $message = ''
+        try {
             Invoke-EndpointOpsRequest -Uri "$($script:Server.BaseUrl)/always-fails" `
-                -Headers @{ Authorization = $script:Token } -MaxAttempts 1
+                -Headers @{ Authorization = $script:Token } -MaxAttempts 1 | Out-Null
         }
-        catch { $_.Exception.Message }
+        catch { $message = $_.Exception.Message }
 
-        $message | Should -Not -Match 'TOKEN-THAT-NEVER-SHOULD-APPEAR'
+        $message | Should -Not -BeNullOrEmpty
+        $message | Should -Match '500'
+        $message | Should -Not -Match ([regex]::Escape($script:TokenValue))
     }
 
     It 'Finds no hardcoded token in source files' {

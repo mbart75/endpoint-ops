@@ -199,10 +199,12 @@ Describe 'Connect-EpmTenant' {
         It 'Does not copy the password into the error message' {
             # EPM sends the password in a JSON body, so error rendering must not copy it into CI logs.
             $message = ''
-            try { Connect-EpmTenant -DispatcherUri $script:Dispatcher -Credential $script:InvalidCredentials }
+            try { Connect-EpmTenant -DispatcherUri $script:Dispatcher -Credential $script:InvalidCredentials | Out-Null }
             catch { $message = $_.Exception.Message }
 
-            $message | Should -Not -BeLike '*WRONG PASSWORD*'
+            $message | Should -Not -BeNullOrEmpty
+            $message | Should -Match 'CyberArk EPM authentication refused'
+            $message | Should -Not -Match ([regex]::Escape($script:InvalidCredentials.GetNetworkCredential().Password))
         }
     }
 
