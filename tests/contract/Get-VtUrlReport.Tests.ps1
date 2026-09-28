@@ -107,7 +107,7 @@ Describe 'Get-VtUrlReport' {
         @($reports.Url) | Should -Be @($script:MaliciousUrl, $script:UnknownUrl)
     }
 
-    It 'Also caches errors and clears this cache on disconnection' {
+    It 'Caches Unknown and clears this cache on disconnection' {
         $before = @((Invoke-RestMethod -Uri "$($script:Server.BaseUrl)/_test/reputation").requests).Count
 
         Get-VtUrlReport -Url $script:UnknownUrl -MinIntervalMs 0 | Out-Null
@@ -118,6 +118,281 @@ Describe 'Get-VtUrlReport' {
 
         $after = @((Invoke-RestMethod -Uri "$($script:Server.BaseUrl)/_test/reputation").requests).Count
         ($after - $before) | Should -Be 2
+    }
+
+    # Production break caught: serving a Clean URL verdict after its seven-day lifetime.
+    It 'Keeps Clean through seven days and requeries after the boundary' {
+        $url = $script:CleanUrl
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ TestUrl = $url; Now = $now } {
+            param($TestUrl, $Now)
+            $testNow = $Now
+            $script:VtUrlReportCache.Clear()
+            $script:VtUrlFreshnessCalls = 0
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                $script:VtUrlFreshnessCalls++
+                $malicious = if ($script:VtUrlFreshnessCalls -eq 1) { 0 } else { 6 }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{
+                                malicious = $malicious; harmless = 10
+                            }
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(7) }
+                $atBoundary = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(8) }
+                $expired = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Clean'
+                $atBoundary.Verdict | Should -BeExactly 'Clean'
+                $expired.Verdict | Should -BeExactly 'Malicious'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtUrlFreshnessCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: losing the quota-saving Unknown entry or retaining it beyond seven days.
+    It 'Keeps Unknown through seven days and requeries after the boundary' {
+        $url = $script:UnknownUrl
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ TestUrl = $url; Now = $now } {
+            param($TestUrl, $Now)
+            $testNow = $Now
+            $script:VtUrlReportCache.Clear()
+            $script:VtUrlUnknownCalls = 0
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                $script:VtUrlUnknownCalls++
+                if ($script:VtUrlUnknownCalls -eq 1) {
+                    throw 'EndpointOps: mock VirusTotal provider returned 404.'
+                }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(7) }
+                $atBoundary = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(8) }
+                $expired = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Unknown'
+                $atBoundary.Verdict | Should -BeExactly 'Unknown'
+                $expired.Verdict | Should -BeExactly 'Clean'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtUrlUnknownCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: serving a Malicious URL verdict after its ninety-day lifetime.
+    It 'Keeps Malicious through ninety days and requeries after the boundary' {
+        $url = $script:MaliciousUrl
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ TestUrl = $url; Now = $now } {
+            param($TestUrl, $Now)
+            $testNow = $Now
+            $script:VtUrlReportCache.Clear()
+            $script:VtUrlMaliciousCalls = 0
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                $script:VtUrlMaliciousCalls++
+                $malicious = if ($script:VtUrlMaliciousCalls -eq 1) { 6 } else { 0 }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{
+                                malicious = $malicious; harmless = 10
+                            }
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(90) }
+                $atBoundary = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddDays(91) }
+                $expired = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Malicious'
+                $atBoundary.Verdict | Should -BeExactly 'Malicious'
+                $expired.Verdict | Should -BeExactly 'Clean'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtUrlMaliciousCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: trusting an entry whose acquisition time is in the future.
+    It 'Evicts a future URL cache timestamp and requeries the provider' {
+        $url = $script:CleanUrl
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ TestUrl = $url; Now = $now } {
+            param($TestUrl, $Now)
+            $testNow = $Now
+            $script:VtUrlReportCache.Clear()
+            $script:VtUrlRollbackCalls = 0
+            Mock Get-VtUtcNow { $testNow }
+            Mock Invoke-VtRequest {
+                $script:VtUrlRollbackCalls++
+                $malicious = if ($script:VtUrlRollbackCalls -eq 1) { 0 } else { 6 }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{
+                                malicious = $malicious; harmless = 10
+                            }
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                Mock Get-VtUtcNow { $testNow.AddSeconds(-1) }
+                $second = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Clean'
+                $second.Verdict | Should -BeExactly 'Malicious'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtUrlRollbackCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: caching a transient provider outage for the entire session.
+    It 'Retries after a transient Unavailable URL transport result' {
+        $url = $script:RateLimitedUrl
+
+        InModuleScope EndpointOps -Parameters @{ TestUrl = $url } {
+            param($TestUrl)
+            $script:VtUrlReportCache.Clear()
+            $script:VtUrlTransportCalls = 0
+            Mock Invoke-VtRequest {
+                $script:VtUrlTransportCalls++
+                if ($script:VtUrlTransportCalls -eq 1) {
+                    throw 'EndpointOps: HTTP 503 from mock VirusTotal provider.'
+                }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                $second = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Unavailable'
+                $second.Verdict | Should -BeExactly 'Clean'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtUrlTransportCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: caching an Unavailable report from malformed provider data.
+    It 'Retries after a malformed Unavailable URL response' {
+        $url = 'https://malformed.example.invalid/recovery'
+
+        InModuleScope EndpointOps -Parameters @{ TestUrl = $url } {
+            param($TestUrl)
+            $script:VtUrlReportCache.Clear()
+            $script:VtUrlMalformedCalls = 0
+            Mock Invoke-VtRequest {
+                $script:VtUrlMalformedCalls++
+                $malicious = if ($script:VtUrlMalformedCalls -eq 1) { 'many' } else { 0 }
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{
+                                malicious = $malicious; harmless = 10
+                            }
+                        }
+                    }
+                }
+            }
+
+            try {
+                $first = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+                $second = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+
+                $first.Verdict | Should -BeExactly 'Unavailable'
+                $second.Verdict | Should -BeExactly 'Clean'
+                Should -Invoke Invoke-VtRequest -Times 2 -Exactly
+            }
+            finally {
+                Remove-Variable -Name VtUrlMalformedCalls -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Production break caught: leaking private cache metadata through the public report.
+    It 'Stores a timestamped private envelope without changing the public report' {
+        $url = $script:CleanUrl
+        $now = [datetime]'2026-09-07T12:00:00Z'
+
+        InModuleScope EndpointOps -Parameters @{ TestUrl = $url; Now = $now } {
+            param($TestUrl, $Now)
+            $script:VtUrlReportCache.Clear()
+            Mock Get-VtUtcNow { $Now }
+            Mock Invoke-VtRequest {
+                [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{ malicious = 0; harmless = 10 }
+                        }
+                    }
+                }
+            }
+
+            $report = Get-VtUrlReport -Url $TestUrl -MinIntervalMs 0
+            $entry = $script:VtUrlReportCache[$TestUrl]
+
+            @($entry.PSObject.Properties.Name) | Should -Be @('Report', 'CachedAtUtc')
+            $entry.CachedAtUtc | Should -BeOfType ([datetime])
+            $entry.CachedAtUtc | Should -BeExactly $Now
+            $report.PSObject.TypeNames[0] | Should -BeExactly 'EndpointOps.VirusTotal.UrlReport'
+            @($report.PSObject.Properties.Name) | Should -Be @(
+                'Url', 'UrlId', 'verdict', 'MaliciousCount', 'TotalEngines',
+                'LastAnalysisDate', 'Permalink')
+            @($report.PSObject.Properties.Name) | Should -Not -Contain 'Report'
+            @($report.PSObject.Properties.Name) | Should -Not -Contain 'CachedAtUtc'
+        }
     }
 
     It 'Isolates cached results from caller mutations' {

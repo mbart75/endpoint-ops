@@ -37,8 +37,15 @@ function Get-VtUrlReport {
 
     process {
         if ($script:VtUrlReportCache.ContainsKey($Url)) {
-            Copy-VtReport -Report $script:VtUrlReportCache[$Url]
-            return
+            $entry = $script:VtUrlReportCache[$Url]
+            $validityDays = if ($entry.Report.Verdict -eq 'Malicious') { 90 } else { 7 }
+            $age = (Get-VtUtcNow) - $entry.CachedAtUtc
+            if ($age -ge [timespan]::Zero -and
+                $age -le [timespan]::FromDays($validityDays)) {
+                Copy-VtReport -Report $entry.Report
+                return
+            }
+            $null = $script:VtUrlReportCache.Remove($Url)
         }
 
         $urlId = ConvertTo-VtUrlId -Url $Url
@@ -60,7 +67,12 @@ function Get-VtUrlReport {
                 LastAnalysisDate = $null
                 Permalink        = $null
             }
-            $script:VtUrlReportCache[$Url] = $report
+            if ($report.Verdict -ne 'Unavailable') {
+                $script:VtUrlReportCache[$Url] = [pscustomobject]@{
+                    Report      = $report.PSObject.Copy()
+                    CachedAtUtc = (Get-VtUtcNow)
+                }
+            }
             Copy-VtReport -Report $report
             return
         }
@@ -133,7 +145,12 @@ function Get-VtUrlReport {
             }
         }
 
-        $script:VtUrlReportCache[$Url] = $report
+        if ($report.Verdict -ne 'Unavailable') {
+            $script:VtUrlReportCache[$Url] = [pscustomobject]@{
+                Report      = $report.PSObject.Copy()
+                CachedAtUtc = (Get-VtUtcNow)
+            }
+        }
         Copy-VtReport -Report $report
     }
 }
