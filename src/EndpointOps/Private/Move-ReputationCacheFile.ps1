@@ -9,7 +9,10 @@ function Move-ReputationCacheFile {
         [System.IO.File]::Exists($DestinationPath)) {
         # WARNING: File.Move replaces the destination ACL with the staging file ACL on Windows.
         # File.Replace preserves the destination ACL and fails rather than weakening that guarantee.
-        [System.IO.File]::Replace($SourcePath, $DestinationPath, $null)
+        $backupPath = "$SourcePath.backup"
+        Invoke-ReputationCacheReplace -SourcePath $SourcePath `
+            -DestinationPath $DestinationPath -BackupPath $backupPath
+        [System.IO.File]::Delete($backupPath)
         return
     }
 
