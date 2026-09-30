@@ -168,7 +168,11 @@ function Write-ReputationCacheFile {
             [System.IO.File]::Delete($temporaryPath)
         }
         if ($null -ne $temporaryDirectory -and [System.IO.Directory]::Exists($temporaryDirectory)) {
-            [System.IO.Directory]::Delete($temporaryDirectory, $false)
+            # WARNING: A failed Windows restore leaves the protected original here.
+            # Keep its directory; deleting it would mask the restoration error.
+            if (-not [System.IO.File]::Exists("$temporaryPath.backup")) {
+                [System.IO.Directory]::Delete($temporaryDirectory, $false)
+            }
         }
     }
 }
