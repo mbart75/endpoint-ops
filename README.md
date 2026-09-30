@@ -61,6 +61,8 @@ Clear-ReputationCache
 
 ## Quick start
 
+Requires PowerShell 7.6 LTS or newer. CI validates the 7.6 runtime explicitly; older versions are not supported.
+
 Import the module from the repository and connect with a PowerShell secure string.
 
 ```powershell

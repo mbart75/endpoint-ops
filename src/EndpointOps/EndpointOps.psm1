@@ -1,4 +1,4 @@
-#Requires -Version 7.2
+#Requires -Version 7.6
 Set-StrictMode -Version 3.0
 
 $privateFiles = @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'Private') -Filter '*.ps1' -Recurse -ErrorAction SilentlyContinue)

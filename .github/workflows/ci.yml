@@ -20,6 +20,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Assert PowerShell 7.6 runtime
+        shell: pwsh
+        run: |
+          Write-Host "PowerShell $($PSVersionTable.PSVersion)"
+          if ($PSVersionTable.PSVersion.Major -ne 7 -or
+              $PSVersionTable.PSVersion.Minor -ne 6) {
+              throw 'CI requires PowerShell 7.6.x.'
+          }
+
       - name: Install tooling
         shell: pwsh
         run: |
