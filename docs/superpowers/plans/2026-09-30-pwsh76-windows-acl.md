@@ -58,11 +58,13 @@
 - [x] Add the Windows job with a runtime/OS gate before installing Pester.
 - [x] Run the filtered ACL test on macOS with `Result`, `FailedContainersCount`, `TotalCount - NotRunCount`, `PassedCount`, and `SkippedCount` checks; confirm it fails because the test is skipped.
 - [x] Validate workflow syntax and run the full local Pester suite plus PSScriptAnalyzer; commit this independently testable CI step.
-- [ ] Resolve the native Windows ACL failure shown by the PR check, then require a green rerun before claiming preservation. The recovery test must first fail when an injected replacement failure has moved the original to its backup.
-- [ ] Open the issue-linked PR; require both Ubuntu and Windows CI jobs to pass before claiming native ACL evidence.
+- [x] Resolve the native Windows ACL failure shown by the PR check, then require a green rerun before claiming preservation. The recovery test first failed when an injected replacement failure moved the original to its backup; run 36750890976 then passed both native Windows tests.
+- [x] Open the issue-linked PR; both Ubuntu and Windows CI jobs passed on run 36750890976.
 
 ## Final Review
 
-- [ ] Inspect the final diff for unrelated changes, secrets, and non-ASCII PowerShell files.
-- [ ] Confirm module exports still match `Public/` and `FunctionsToExport`.
-- [ ] Obtain independent review and report exact local and GitHub CI results.
+- [x] Inspect the final diff for unrelated changes, secrets, and non-ASCII PowerShell files.
+- [x] Confirm module exports still match `Public/` and `FunctionsToExport` (31 each).
+- [x] Obtain independent review and report exact local and GitHub CI results.
+
+The independent review found no blocking issue. A non-blocking follow-up is to inject restoration-denied through the entire writer path and assert warning plus protected backup retention; native byte-for-byte proof here covers a protected ACL, not every inherited-ACL layout.
