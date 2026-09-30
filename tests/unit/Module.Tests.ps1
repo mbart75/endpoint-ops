@@ -10,6 +10,10 @@ AfterAll {
 }
 
 Describe 'Module EndpointOps' {
+    It 'Declares PowerShell 7.6 as its minimum supported version' {
+        (Import-PowerShellDataFile $script:ModulePath).PowerShellVersion | Should -BeExactly '7.6'
+    }
+
     It 'Exposes Get-EndpointOpsVersion' {
         Get-Command -Module 'EndpointOps' -Name 'Get-EndpointOpsVersion' | Should -Not -BeNullOrEmpty
     }

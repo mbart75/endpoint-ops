@@ -1,4 +1,4 @@
-#Requires -Version 7.2
+#Requires -Version 7.6
 
 Set-StrictMode -Version 3.0
 
@@ -1199,6 +1199,53 @@ Describe 'Get-FileReputation reputation cache' {
                 -UseCache -CachePath $DiskPath
 
             $result.Verdict | Should -BeExactly 'Clean'
+            (Test-Path -LiteralPath $DiskPath) | Should -BeFalse
+        }
+    }
+
+    # Production break caught: a private session envelope from another report cannot date this result.
+    It '37. does not persist a VirusTotal result when the private <Mismatch> differs' -ForEach @(
+        @{ Mismatch = 'hash'; EnvelopeHash = (('D' * 38) + '04'); EnvelopeVerdict = 'Clean' }
+        @{ Mismatch = 'verdict'; EnvelopeHash = (('A' * 38) + '01'); EnvelopeVerdict = 'Malicious' }
+    ) {
+        $cachePath = Join-Path $TestDrive "mismatched-$Mismatch/reputation-cache.json"
+
+        InModuleScope EndpointOps -Parameters @{
+            LookupHash = $script:CleanHash
+            DiskPath = $cachePath
+            PrivateHash = $EnvelopeHash
+            PrivateVerdict = $EnvelopeVerdict
+        } {
+            param($LookupHash, $DiskPath, $PrivateHash, $PrivateVerdict)
+            $script:VtFileReportCache.Clear()
+            $script:VtFileReportCache[$LookupHash] = [pscustomobject]@{
+                Report = [pscustomobject]@{
+                    Hash = $PrivateHash
+                    Verdict = $PrivateVerdict
+                }
+                CachedAtUtc = [datetime]::UtcNow.AddDays(-6)
+            }
+            Mock Get-VtFileReport {
+                param($Hash)
+                [pscustomobject]@{
+                    PSTypeName       = 'EndpointOps.VirusTotal.FileReport'
+                    Hash             = $Hash
+                    Verdict          = 'Clean'
+                    MaliciousCount   = 0
+                    TotalEngines     = 10
+                    LastAnalysisDate = $null
+                    Permalink        = $null
+                    Sha1             = $Hash
+                    Sha256           = ('A' * 64)
+                    Md5              = ('A' * 32)
+                }
+            }
+
+            $result = Get-FileReputation -Hash $LookupHash -MinIntervalMs 0 -SkipCascade `
+                -UseCache -CachePath $DiskPath
+
+            $result.Verdict | Should -BeExactly 'Clean'
+            $result.Sources[0].Source | Should -BeExactly 'VirusTotal'
             (Test-Path -LiteralPath $DiskPath) | Should -BeFalse
         }
     }

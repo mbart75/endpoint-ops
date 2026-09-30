@@ -40,8 +40,8 @@ function Write-ReputationCacheFile {
             $stream = [System.IO.FileStream]::new($temporaryPath, $options)
         }
         else {
-            # PowerShell 7.2 uses .NET 6, before UnixCreateMode was available. A private sibling
-            # directory prevents an empty, briefly inherited file from being opened before its
+            # On Windows, or when UnixCreateMode is absent, a private sibling directory prevents
+            # an empty, briefly inherited file from being opened before its
             # permissions are restricted. No cache content is written until the file is private.
             $temporaryDirectory = $temporaryStem
             [System.IO.Directory]::CreateDirectory($temporaryDirectory) | Out-Null
