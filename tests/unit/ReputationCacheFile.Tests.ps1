@@ -199,6 +199,7 @@ Describe 'Persistent cache atomic file replacement' {
         } $cachePath
 
         $result.Failure | Should -Not -BeNullOrEmpty
+        $result.Failure.ScriptStackTrace | Should -Match 'Move-ReputationCacheFile'
         @($result.Warnings).Count | Should -Be 1
         $result.Warnings[0].ToString() | Should -Match 'cache restoration failed'
         $backups = @(Get-ChildItem -LiteralPath $TestDrive -Recurse -File -Filter 'cache.backup')
