@@ -134,6 +134,6 @@ jobs:
               -FullNameFilter '*existing Windows cache*' -Output Detailed -PassThru
           $selectedCount = $r.TotalCount - $r.NotRunCount
           if ($r.Result -ne 'Passed' -or $r.FailedContainersCount -ne 0 -or
-              $selectedCount -ne 2 -or $r.PassedCount -ne 2 -or $r.SkippedCount -ne 0) {
+              $selectedCount -ne 3 -or $r.PassedCount -ne 3 -or $r.SkippedCount -ne 0) {
               throw "Windows ACL validation failed: result=$($r.Result), selected=$selectedCount, passed=$($r.PassedCount), skipped=$($r.SkippedCount), failedContainers=$($r.FailedContainersCount)"
           }
