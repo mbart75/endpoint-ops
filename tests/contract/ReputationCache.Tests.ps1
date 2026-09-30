@@ -1119,4 +1119,87 @@ Describe 'Get-FileReputation reputation cache' {
         $entries = @((Get-Content $cachePath -Raw) | ConvertFrom-Json)
         @($entries).CanonicalSha256 | Should -Be @($canonicalSha256, $canonicalSha256)
     }
+
+    # Production break caught: transferring a session hit must not renew its disk lifetime.
+    It '35. preserves original <Verdict> acquisition time across the session-to-disk transfer' -ForEach @(
+        @{ Verdict = 'Clean'; Hash = (('A' * 38) + '01'); AgeDays = 6; LifetimeDays = 7 }
+        @{ Verdict = 'Unknown'; Hash = (('B' * 38) + '02'); AgeDays = 6; LifetimeDays = 7 }
+        @{ Verdict = 'Malicious'; Hash = (('C' * 38) + '03'); AgeDays = 80; LifetimeDays = 90 }
+    ) {
+        $cachePath = Join-Path $TestDrive "age-transfer-$Verdict/reputation-cache.json"
+        $vtPath = "/api/v3/files/$Hash"
+        $seedReport = Get-VtFileReport -Hash $Hash -MinIntervalMs 0
+        $seedReport.Verdict | Should -BeExactly $Verdict
+
+        $referenceDate = [datetime]::UtcNow
+        $acquiredAt = $referenceDate.AddDays(-$AgeDays)
+        InModuleScope EndpointOps -Parameters @{ LookupHash = $Hash; OriginalDate = $acquiredAt } {
+            param($LookupHash, $OriginalDate)
+            $script:VtFileReportCache[$LookupHash].CachedAtUtc = $OriginalDate
+        }
+        $beforeTransfer = Get-ReputationRequestCount -Path $vtPath
+
+        $transferred = Get-FileReputation -Hash $Hash -MinIntervalMs 0 -SkipCascade `
+            -UseCache -CachePath $cachePath -ReferenceDate $referenceDate
+
+        $afterTransfer = Get-ReputationRequestCount -Path $vtPath
+        ($afterTransfer - $beforeTransfer) | Should -Be 0
+        $transferred.Verdict | Should -BeExactly $Verdict
+        $transferred.Sources[0].QueryDate | Should -BeExactly $acquiredAt
+        $diskEntry = @((Get-Content -LiteralPath $cachePath -Raw) | ConvertFrom-Json)[0]
+        ([datetime]$diskEntry.QueryDate).ToUniversalTime() | Should -BeExactly $acquiredAt
+
+        InModuleScope EndpointOps { $script:VtFileReportCache.Clear() }
+        $beforeBoundary = Get-ReputationRequestCount -Path $vtPath
+        $atBoundary = $acquiredAt.AddDays($LifetimeDays)
+
+        $stillValid = Get-FileReputation -Hash $Hash -MinIntervalMs 0 -SkipCascade `
+            -UseCache -CachePath $cachePath -ReferenceDate $atBoundary
+
+        $afterBoundary = Get-ReputationRequestCount -Path $vtPath
+        ($afterBoundary - $beforeBoundary) | Should -Be 0
+        $stillValid.Sources[0].Detail | Should -BeLike '*persistent cache*'
+
+        $beforeExpiry = Get-ReputationRequestCount -Path $vtPath
+        $afterLifetime = $acquiredAt.AddDays($LifetimeDays).AddMinutes(1)
+
+        $refreshed = Get-FileReputation -Hash $Hash -MinIntervalMs 0 -SkipCascade `
+            -UseCache -CachePath $cachePath -ReferenceDate $afterLifetime
+
+        $afterExpiry = Get-ReputationRequestCount -Path $vtPath
+        ($afterExpiry - $beforeExpiry) | Should -Be 1
+        $refreshed.Verdict | Should -BeExactly $Verdict
+        $refreshed.Sources[0].Detail | Should -Not -BeLike '*persistent cache*'
+    }
+
+    # Production break caught: a report without matching private acquisition metadata gets a new lease.
+    It '36. leaves disk untouched when VirusTotal acquisition time is unavailable' {
+        $cachePath = Join-Path $TestDrive 'missing-acquisition/reputation-cache.json'
+
+        InModuleScope EndpointOps -Parameters @{ LookupHash = $script:CleanHash; DiskPath = $cachePath } {
+            param($LookupHash, $DiskPath)
+            $script:VtFileReportCache.Clear()
+            Mock Get-VtFileReport {
+                param($Hash)
+                [pscustomobject]@{
+                    PSTypeName       = 'EndpointOps.VirusTotal.FileReport'
+                    Hash             = $Hash
+                    Verdict          = 'Clean'
+                    MaliciousCount   = 0
+                    TotalEngines     = 10
+                    LastAnalysisDate = $null
+                    Permalink        = $null
+                    Sha1             = $Hash
+                    Sha256           = ('A' * 64)
+                    Md5              = ('A' * 32)
+                }
+            }
+
+            $result = Get-FileReputation -Hash $LookupHash -MinIntervalMs 0 -SkipCascade `
+                -UseCache -CachePath $DiskPath
+
+            $result.Verdict | Should -BeExactly 'Clean'
+            (Test-Path -LiteralPath $DiskPath) | Should -BeFalse
+        }
+    }
 }

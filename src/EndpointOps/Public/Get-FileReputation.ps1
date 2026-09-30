@@ -143,6 +143,17 @@ function Get-FileReputation {
         }
 
         $vtReport = Get-VtFileReport -Hash $Hash -MinIntervalMs $MinIntervalMs
+        $vtQueryDate = [datetime]::UtcNow
+        $hasVtAcquisitionTime = $false
+        if ($vtReport.Verdict -ne 'Unavailable' -and $script:VtFileReportCache.ContainsKey($Hash)) {
+            $vtCacheEntry = $script:VtFileReportCache[$Hash]
+            if ([string]::Equals($vtCacheEntry.Report.Hash, $vtReport.Hash,
+                    [System.StringComparison]::OrdinalIgnoreCase) -and
+                $vtCacheEntry.Report.Verdict -ceq $vtReport.Verdict) {
+                $vtQueryDate = $vtCacheEntry.CachedAtUtc
+                $hasVtAcquisitionTime = $true
+            }
+        }
         $reportedLookupHash = switch ($Hash.Length) {
             32 { [string]$vtReport.Md5 }
             40 { [string]$vtReport.Sha1 }
@@ -179,7 +190,7 @@ function Get-FileReputation {
             Detail     = $vtDetail
             HashUsed   = $Hash
             HashSource = 'EPM'
-            QueryDate  = [datetime]::UtcNow
+            QueryDate  = $vtQueryDate
         }
         $sources = [System.Collections.Generic.List[object]]::new()
         $sources.Add($vtVerdict)
@@ -212,6 +223,10 @@ function Get-FileReputation {
 
         if ($UseCache) {
             foreach ($source in $sources) {
+                if ($source.Source -eq 'VirusTotal' -and -not $hasVtAcquisitionTime) {
+                    # WARNING: do not renew an unproven observation with the current clock.
+                    continue
+                }
                 Write-ReputationCacheEntry -SourceResult $source -LookupHash $Hash `
                     -CanonicalSha256 $validatedCanonicalSha256 -CachePath $CachePath
             }
