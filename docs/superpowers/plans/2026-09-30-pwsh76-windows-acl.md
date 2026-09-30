@@ -50,7 +50,7 @@
 **Files:**
 - Modify: `.github/workflows/ci.yml` (separate Windows ACL job)
 - Modify: `README.md` (describe native Windows CI evidence)
-- Reuse unchanged: `tests/unit/ReputationCacheFile.Tests.ps1` (existing ACL test)
+- Modify: `tests/unit/ReputationCacheFile.Tests.ps1` (the native run exposed inherited-ACL SDDL reification; test an explicit restrictive ACL and partial-failure recovery)
 - If native CI reveals the existing ACL invariant is broken, minimally modify `src/EndpointOps/Private/Move-ReputationCacheFile.ps1` and document the verified cause in `docs/decisions.md`.
 
 **Interfaces:** The Windows job uses `windows-2025`, `shell: pwsh`, PowerShell 7.6.x, Pester 6.0.1, and a `FullNameFilter` selecting exactly the existing ACL and new partial-failure recovery tests.
@@ -58,7 +58,7 @@
 - [x] Add the Windows job with a runtime/OS gate before installing Pester.
 - [x] Run the filtered ACL test on macOS with `Result`, `FailedContainersCount`, `TotalCount - NotRunCount`, `PassedCount`, and `SkippedCount` checks; confirm it fails because the test is skipped.
 - [x] Validate workflow syntax and run the full local Pester suite plus PSScriptAnalyzer; commit this independently testable CI step.
-- [ ] Resolve the native Windows ACL failure shown by the PR check, then require a green rerun before claiming preservation.
+- [ ] Resolve the native Windows ACL failure shown by the PR check, then require a green rerun before claiming preservation. The recovery test must first fail when an injected replacement failure has moved the original to its backup.
 - [ ] Open the issue-linked PR; require both Ubuntu and Windows CI jobs to pass before claiming native ACL evidence.
 
 ## Final Review

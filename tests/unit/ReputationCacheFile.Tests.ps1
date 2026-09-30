@@ -118,6 +118,16 @@ Describe 'Persistent cache atomic file replacement' {
     It 'preserves an existing Windows cache ACL during atomic replacement' -Skip:(-not $IsWindows) {
         $cachePath = Join-Path $TestDrive 'preserved-acl.json'
         [IO.File]::WriteAllText($cachePath, '[]')
+        $restrictedAcl = Get-Acl -LiteralPath $cachePath
+        $restrictedAcl.SetAccessRuleProtection($true, $false)
+        foreach ($rule in @($restrictedAcl.Access)) {
+            $restrictedAcl.RemoveAccessRuleAll($rule)
+        }
+        $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $restrictedAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+                $currentUser, [Security.AccessControl.FileSystemRights]::FullControl,
+                [Security.AccessControl.AccessControlType]::Allow))
+        Set-Acl -LiteralPath $cachePath -AclObject $restrictedAcl
         $before = (Get-Acl -LiteralPath $cachePath).Sddl
 
         & (Get-Module EndpointOps) {
@@ -136,6 +146,7 @@ Describe 'Persistent cache atomic file replacement' {
 
         Mock Invoke-ReputationCacheReplace -ModuleName EndpointOps {
             param($SourcePath, $DestinationPath, $BackupPath)
+            [IO.File]::Exists($SourcePath) | Should -BeTrue
             [IO.File]::Move($DestinationPath, $BackupPath)
             throw 'injected partial replacement failure'
         }
