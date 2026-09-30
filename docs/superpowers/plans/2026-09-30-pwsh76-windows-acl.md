@@ -22,7 +22,7 @@
 
 - A runner silently downgrades `pwsh`: version gate must fail before test/tool installation (Task 1).
 - A Windows-labelled job runs a non-Windows shell: explicit `$IsWindows` gate must fail (Task 2).
-- Pester selects no ACL test: `TotalCount -eq 1` must be asserted (Task 2).
+- Pester selects no ACL test: `TotalCount - NotRunCount -eq 1` must be asserted (Task 2).
 - Pester skips the ACL test: `SkippedCount -eq 0` and `PassedCount -eq 1` must be asserted (Task 2).
 - Windows ACL assertion fails in practice: PR CI is the required native execution proof; do not claim local macOS validation covers it (Task 2).
 
@@ -49,13 +49,14 @@
 
 **Files:**
 - Modify: `.github/workflows/ci.yml` (separate Windows ACL job)
+- Modify: `README.md` (describe native Windows CI evidence)
 - Reuse unchanged: `tests/unit/ReputationCacheFile.Tests.ps1` (existing ACL test)
 
 **Interfaces:** The Windows job uses `windows-2025`, `shell: pwsh`, PowerShell 7.6.x, Pester 6.0.1, and a `FullNameFilter` selecting exactly the existing ACL test.
 
-- [ ] Add the Windows job with a runtime/OS gate before installing Pester.
-- [ ] Run the filtered ACL test on macOS with the proposed `Result`, `FailedContainersCount`, `TotalCount`, `PassedCount`, and `SkippedCount` checks; confirm it fails because the test is skipped.
-- [ ] Validate workflow syntax and run the full local Pester suite plus PSScriptAnalyzer; commit this independently testable CI step.
+- [x] Add the Windows job with a runtime/OS gate before installing Pester.
+- [x] Run the filtered ACL test on macOS with `Result`, `FailedContainersCount`, `TotalCount - NotRunCount`, `PassedCount`, and `SkippedCount` checks; confirm it fails because the test is skipped.
+- [x] Validate workflow syntax and run the full local Pester suite plus PSScriptAnalyzer; commit this independently testable CI step.
 - [ ] Open the issue-linked PR; require both Ubuntu and Windows CI jobs to pass before claiming native ACL evidence.
 
 ## Final Review

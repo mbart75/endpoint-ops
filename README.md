@@ -133,6 +133,7 @@ CI runs the following gates:
 | Security tests | Tokens and passwords do not appear in verbose output, debug output, or error messages. |
 | Secret scanning | Gitleaks checks the Git history for committed secrets. |
 | Manifest validation | `EndpointOps.psd1` remains a valid PowerShell module manifest. |
+| Native Windows cache ACL | A separate Windows Server 2025 job runs the existing ACL-preservation test under verified PowerShell 7.6; a skipped or unselected test fails the job. |
 
 ## Limitations
 
