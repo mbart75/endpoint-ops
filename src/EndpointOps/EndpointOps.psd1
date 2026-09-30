@@ -6,7 +6,7 @@
     CompanyName          = 'Maxence Barthelemy'
     Copyright            = '(c) 2026 Maxence Barthelemy. Licensed under the MIT License.'
     Description          = 'Automation toolkit for SentinelOne, CyberArk EPM, and multi-source file-reputation endpoint operations.'
-    PowerShellVersion    = '7.2'
+    PowerShellVersion    = '7.6'
     CompatiblePSEditions = @('Core')
     FunctionsToExport    = @(
         'Clear-ReputationCache',
