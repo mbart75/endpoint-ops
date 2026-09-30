@@ -22,8 +22,8 @@
 
 - A runner silently downgrades `pwsh`: version gate must fail before test/tool installation (Task 1).
 - A Windows-labelled job runs a non-Windows shell: explicit `$IsWindows` gate must fail (Task 2).
-- Pester selects no ACL test: `TotalCount - NotRunCount -eq 1` must be asserted (Task 2).
-- Pester skips the ACL test: `SkippedCount -eq 0` and `PassedCount -eq 1` must be asserted (Task 2).
+- Pester selects no Windows cache test: `TotalCount - NotRunCount -eq 2` must be asserted after the recovery test was added (Task 2).
+- Pester skips a Windows cache test: `SkippedCount -eq 0` and `PassedCount -eq 2` must be asserted (Task 2).
 - Windows ACL assertion fails in practice: PR CI is the required native execution proof; do not claim local macOS validation covers it (Task 2).
 
 ---
@@ -53,7 +53,7 @@
 - Reuse unchanged: `tests/unit/ReputationCacheFile.Tests.ps1` (existing ACL test)
 - If native CI reveals the existing ACL invariant is broken, minimally modify `src/EndpointOps/Private/Move-ReputationCacheFile.ps1` and document the verified cause in `docs/decisions.md`.
 
-**Interfaces:** The Windows job uses `windows-2025`, `shell: pwsh`, PowerShell 7.6.x, Pester 6.0.1, and a `FullNameFilter` selecting exactly the existing ACL test.
+**Interfaces:** The Windows job uses `windows-2025`, `shell: pwsh`, PowerShell 7.6.x, Pester 6.0.1, and a `FullNameFilter` selecting exactly the existing ACL and new partial-failure recovery tests.
 
 - [x] Add the Windows job with a runtime/OS gate before installing Pester.
 - [x] Run the filtered ACL test on macOS with `Result`, `FailedContainersCount`, `TotalCount - NotRunCount`, `PassedCount`, and `SkippedCount` checks; confirm it fails because the test is skipped.

@@ -36,6 +36,24 @@ BeforeAll {
 }
 
 Describe 'Persistent cache atomic file replacement' {
+    It 'creates a backup when replacing an existing cache file' {
+        $sourcePath = Join-Path $TestDrive 'replacement-source.json'
+        $destinationPath = Join-Path $TestDrive 'replacement-destination.json'
+        $backupPath = Join-Path $TestDrive 'replacement-backup.json'
+        [IO.File]::WriteAllText($sourcePath, 'new')
+        [IO.File]::WriteAllText($destinationPath, 'old')
+
+        & (Get-Module EndpointOps) {
+            param($SourcePath, $DestinationPath, $BackupPath)
+            Invoke-ReputationCacheReplace -SourcePath $SourcePath `
+                -DestinationPath $DestinationPath -BackupPath $BackupPath
+        } $sourcePath $destinationPath $backupPath
+
+        (Get-Content -LiteralPath $destinationPath -Raw) | Should -BeExactly 'new'
+        (Get-Content -LiteralPath $backupPath -Raw) | Should -BeExactly 'old'
+        (Test-Path -LiteralPath $sourcePath) | Should -BeFalse
+    }
+
     It 'preserves the live file and removes its temporary file when replacement fails' {
         $cachePath = Join-Path $TestDrive 'interrupted.json'
         $originalContent = '[{"Hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","Source":"VirusTotal","Verdict":"Malicious","QueryDate":"2026-09-01T00:00:00Z"}]'
@@ -108,6 +126,27 @@ Describe 'Persistent cache atomic file replacement' {
         } $cachePath
 
         (Get-Acl -LiteralPath $cachePath).Sddl | Should -BeExactly $before
+    }
+
+    It 'restores an existing Windows cache after a partial replacement failure' -Skip:(-not $IsWindows) {
+        $sourcePath = Join-Path $TestDrive 'partial-source.json'
+        $destinationPath = Join-Path $TestDrive 'partial-destination.json'
+        [IO.File]::WriteAllText($sourcePath, 'new')
+        [IO.File]::WriteAllText($destinationPath, 'old')
+
+        Mock Invoke-ReputationCacheReplace -ModuleName EndpointOps {
+            param($SourcePath, $DestinationPath, $BackupPath)
+            [IO.File]::Move($DestinationPath, $BackupPath)
+            throw 'injected partial replacement failure'
+        }
+
+        { & (Get-Module EndpointOps) {
+            param($SourcePath, $DestinationPath)
+            Move-ReputationCacheFile -SourcePath $SourcePath -DestinationPath $DestinationPath
+        } $sourcePath $destinationPath } | Should -Throw '*injected partial replacement failure*'
+
+        (Get-Content -LiteralPath $destinationPath -Raw) | Should -BeExactly 'old'
+        (Test-Path -LiteralPath "$sourcePath.backup") | Should -BeFalse
     }
 }
 

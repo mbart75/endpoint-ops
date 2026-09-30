@@ -131,9 +131,9 @@ jobs:
         shell: pwsh
         run: |
           $r = Invoke-Pester -Path ./tests/unit/ReputationCacheFile.Tests.ps1 `
-              -FullNameFilter '*preserves an existing Windows cache ACL*' -Output Detailed -PassThru
+              -FullNameFilter '*existing Windows cache*' -Output Detailed -PassThru
           $selectedCount = $r.TotalCount - $r.NotRunCount
           if ($r.Result -ne 'Passed' -or $r.FailedContainersCount -ne 0 -or
-              $selectedCount -ne 1 -or $r.PassedCount -ne 1 -or $r.SkippedCount -ne 0) {
+              $selectedCount -ne 2 -or $r.PassedCount -ne 2 -or $r.SkippedCount -ne 0) {
               throw "Windows ACL validation failed: result=$($r.Result), selected=$selectedCount, passed=$($r.PassedCount), skipped=$($r.SkippedCount), failedContainers=$($r.FailedContainersCount)"
           }
