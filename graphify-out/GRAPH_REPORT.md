@@ -1,115 +1,120 @@
-# Graph Report - endpoint-ops (2026-08-30)
+# Graph Report - endpoint-ops (2026-09-30)
 
 ## Corpus Check
-- 133 files · ~77,961 words
+- 143 files · ~103,972 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 233 nodes · 198 edges · 84 communities
-- Extraction: 57% EXTRACTED · 43% INFERRED · 0% AMBIGUOUS · INFERRED: 86 edges (avg confidence: 0.8)
-- Token cost: 18,839 input · 7,600 output
+- 253 nodes · 212 edges · 90 communities
+- Extraction: 63% EXTRACTED · 37% INFERRED · 0% AMBIGUOUS · INFERRED: 79 edges (avg confidence: 0.81)
+- Token accounting: unavailable for agent-assisted semantic extraction in this run; zero in the generator metadata does not mean zero usage.
+
+## Graph Freshness
+- Built from commit: `8d07290e`
+- Compare this source commit with later code/documentation changes; a graph-only commit does not invalidate the map.
+- Refresh after code or documentation changes; code-only extraction is local, while changed documentation needs semantic extraction.
 
 ## Community Hubs (Navigation)
-- Scoring and EPM Requests
-- Architecture and API Research
+- EPM Scoring and Requests
+- API Trust and Evidence
+- Persistent Reputation Cache
 - SentinelOne Observation Flow
-- Cache and Shared Requests
-- VirusTotal Client Flow
-- Detection and Device Control
+- Reputation Provider Requests
+- HTTP Transport and Hybrid Analysis
+- Device Control Evidence
 - CI Assurance Pipeline
-- Hybrid Analysis Transport
-- EPM Elevation and State
+- Detection Workflows
 
 ## God Nodes (most connected - your core abstractions)
-1. `Get-PropertyOrDefault()` - 19 edges
-2. `endpoint-ops` - 11 edges
-3. `Invoke-EpmRequest()` - 10 edges
-4. `Invoke-S1Request()` - 9 edges
-5. `Device Control Rule-Usage Inventory Roadmap` - 9 edges
-6. `Get-FileReputation()` - 8 edges
-7. `Invoke-EndpointOpsRequest()` - 8 edges
-8. `CI Validation Pipeline` - 8 edges
-9. `Invoke-VtRequest()` - 7 edges
-10. `Get-VtFileReport()` - 7 edges
+1. `Get-PropertyOrDefault()` - 15 edges
+2. `EndpointOps overview` - 11 edges
+3. `Invoke-S1Request()` - 9 edges
+4. `Device Control rule-usage inventory roadmap` - 9 edges
+5. `Invoke-EndpointOpsRequest()` - 8 edges
+6. `CI validation pipeline` - 8 edges
+7. `Invoke-EpmRequest()` - 7 edges
+8. `Reputation-service API research` - 7 edges
+9. `SHA-1 reputation cascade` - 7 edges
+10. `Detection backlog` - 6 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `Multi-Source Reputation Cascade` --semantically_similar_to--> `Evidence-Preserving Reputation Reconciliation`  [INFERRED] [semantically similar]
-  README.md → docs/api-notes-reputation.md
-- `CI Validation Pipeline` --conceptually_related_to--> `endpoint-ops`  [INFERRED]
+- `Authentication, hash, and cache trust boundaries` --semantically_similar_to--> `Mock-backed validation boundary`  [INFERRED] [semantically similar]
+  docs/superpowers/specs/2026-09-07-independent-review-hardening-design.md → README.md
+- `SHA-1 reputation cascade` --semantically_similar_to--> `Reputation cannot authorize`  [INFERRED] [semantically similar]
+  docs/api-notes-reputation.md → README.md
+- `Fail-soft optional reputation` --semantically_similar_to--> `Reputation cannot authorize`  [INFERRED] [semantically similar]
+  docs/decisions.md → README.md
+- `CI validation pipeline` --conceptually_related_to--> `Mock-backed validation boundary`  [INFERRED]
   .github/workflows/ci.yml → README.md
-- `endpoint-ops` --references--> `Device Control Rule-Usage Inventory Roadmap`  [EXTRACTED]
-  README.md → docs/device-control-rule-usage-roadmap.md
-- `Get-VtUrlReport()` --calls--> `ConvertTo-VtUrlId()`  [INFERRED]
-  src/EndpointOps/Public/Get-VtUrlReport.ps1 → src/EndpointOps/Private/ConvertTo-VtUrlId.ps1
-- `Invoke-EpmRequest()` --calls--> `Get-EpmConnectionState()`  [INFERRED]
-  src/EndpointOps/Private/Invoke-EpmRequest.ps1 → src/EndpointOps/Private/Get-EpmConnectionState.ps1
+- `EndpointOps overview` --references--> `API research notes`  [EXTRACTED]
+  README.md → docs/api-notes.md
 
 ## Import Cycles
 - None detected.
 
 ## Hyperedges (group relationships)
+- **Independent-review hardening cycle** — docs_superpowers_specs_2026_09_07_independent_review_hardening_design_hardening_design, docs_superpowers_plans_2026_09_07_lot8_security_behavioral_blockers_lot8_plan, docs_superpowers_plans_2026_09_07_lot9_evidence_cache_integrity_lot9_plan, docs_superpowers_plans_2026_09_07_lot10_transport_preventive_controls_lot10_plan [EXTRACTED 1.00]
 - **Seven-Stage CI Assurance** — github_workflows_ci_static_analysis, github_workflows_ci_unit_tests, github_workflows_ci_canary, github_workflows_ci_contract_tests, github_workflows_ci_security_tests, github_workflows_ci_secret_scanning, github_workflows_ci_manifest_validation [EXTRACTED 1.00]
 - **Ordered Multi-Source Reputation Evidence Cascade** — docs_api_notes_reputation_virustotal, docs_api_notes_reputation_malwarebazaar, docs_api_notes_reputation_hybrid_analysis, docs_api_notes_reputation_threatfox, docs_api_notes_reputation_reconciliation [EXTRACTED 1.00]
-- **Device Control Rule-Usage Evidence Model** — docs_device_control_rule_usage_roadmap_traceability_model, docs_device_control_rule_usage_roadmap_correlation_levels, docs_device_control_rule_usage_roadmap_separate_usage_and_demand, docs_device_control_rule_usage_roadmap_logging_coverage_gate, docs_device_control_rule_usage_roadmap_read_only_snapshots [EXTRACTED 1.00]
 
-## Communities (84 total, 75 thin communities available in the graph only)
+## Communities (90 total; nine substantive communities displayed)
 
-The report expands the nine multi-node architectural communities below. Smaller test- and command-specific communities remain available in `graph.json` and `graph.html` without being repeated as one-line report sections.
+The remaining small or structural-only communities remain in `graph.json` and `graph.html`; they are omitted here to keep the report navigable.
 
-### Community 0 - "Scoring and EPM Requests"
+### Community 0 - "EPM Scoring and Requests"
 Cohesion: 0.08
-Nodes (16): ConvertTo-EpmSet(), Get-EpmConnectionState(), Get-EpmNextCursor(), Get-PropertyOrDefault(), Get-WorstSeverity(), Invoke-EpmRequest(), Measure-DeviceRuleBreadth(), Measure-ExclusionBreadth() (+8 more)
+Nodes (16): ConvertTo-EpmSet(), Get-EpmNextCursor(), Get-PropertyOrDefault(), Get-WorstSeverity(), Invoke-EpmRequest(), Measure-DeviceRuleBreadth(), Measure-ExclusionBreadth(), Get-EpmElevationEvent() (+8 more)
 
-### Community 1 - "Architecture and API Research"
+### Community 1 - "API Trust and Evidence"
 Cohesion: 0.11
-Nodes (21): API Research Notes, CyberArk EPM API Notes, Defensive EPM Response Handling, CyberArk EPM Dispatcher Authentication Model, EPM Offset and Cursor Pagination, Hybrid Analysis Reputation Source, MalwareBazaar Reputation Source, Evidence-Preserving Reputation Reconciliation (+13 more)
+Nodes (28): EPM dispatcher-to-manager topology, EPM offset and cursor pagination, CyberArk EPM API research, Validated VirusTotal SHA-256 pivot, Hybrid Analysis Reputation Source, MalwareBazaar Reputation Source, Evidence-Preserving Reputation Reconciliation, Reputation-service API research (+20 more)
 
-### Community 2 - "SentinelOne Observation Flow"
+### Community 2 - "Persistent Reputation Cache"
+Cohesion: 0.11
+Nodes (10): Get-MbFileVerdict(), Invoke-WithReputationCacheLock(), Move-ReputationCacheFile(), Test-ReputationCacheFile(), Write-ReputationCacheEntry(), Write-ReputationCacheFile(), Clear-ReputationCache(), Get-EpmElevationSummary() (+2 more)
+
+### Community 3 - "SentinelOne Observation Flow"
 Cohesion: 0.11
 Nodes (10): Get-S1ConnectionState(), Invoke-S1Request(), Test-ObservationWindow(), Test-OsBuildStatus(), Connect-S1Tenant(), Get-S1Agent(), Get-S1DeviceControlEvent(), Get-S1FleetHygieneReport() (+2 more)
 
-### Community 3 - "Cache and Shared Requests"
+### Community 4 - "Reputation Provider Requests"
 Cohesion: 0.12
-Nodes (9): Get-MbConnectionState(), Get-MbFileVerdict(), Get-ReputationCacheEntry(), Get-TfFileVerdict(), Invoke-MbRequest(), Write-ReputationCacheEntry(), Connect-EpmTenant(), Get-FileReputation() (+1 more)
+Nodes (9): Get-HttpStatusFromError(), Get-MbConnectionState(), Get-TfFileVerdict(), Get-VtConnectionState(), Get-VtUtcNow(), Invoke-MbRequest(), Invoke-VtRequest(), Connect-EpmTenant() (+1 more)
 
-### Community 4 - "VirusTotal Client Flow"
-Cohesion: 0.16
-Nodes (8): ConvertTo-VtUrlId(), ConvertTo-VtVerdict(), Copy-VtReport(), Get-HttpStatusFromError(), Get-VtUtcNow(), Invoke-VtRequest(), Get-VtFileReport(), Get-VtUrlReport()
+### Community 5 - "HTTP Transport and Hybrid Analysis"
+Cohesion: 0.20
+Nodes (5): Get-EndpointOpsUtcNow(), Get-HaConnectionState(), Get-HaFileVerdict(), Invoke-EndpointOpsHttpRequest(), Invoke-HaRequest()
 
-### Community 5 - "Detection and Device Control"
-Cohesion: 0.18
-Nodes (14): Device Control Rule and Event Contract Gap, Detection Backlog, W1 SentinelOne Fleet Hygiene, W2 EPM Events to Policy Proposals, W3 SentinelOne Exclusion Review, W4.7 Unused Authorization Review, W4.8 Rule-Level Usage Inventory, W4 Device Control Review (+6 more)
+### Community 6 - "Device Control Evidence"
+Cohesion: 0.28
+Nodes (9): API research notes, Device Control contract uncertainty, Allowed usage versus blocked demand, Direct Candidate and Unresolved Correlation Levels, Coverage prerequisite for non-use, Read-Only Versioned Rule Snapshots, Versioned read-only rule snapshot, Device Control rule-usage inventory roadmap (+1 more)
 
-### Community 6 - "CI Assurance Pipeline"
+### Community 7 - "CI Assurance Pipeline"
 Cohesion: 0.29
-Nodes (8): Mock Server Canary Gate, CI Validation Pipeline, Contract Test Gate, PowerShell Manifest Validation Gate, Gitleaks Secret Scanning Gate, Security Test Gate, Static Analysis Gate, Unit Test Gate
+Nodes (8): Mock Server Canary Gate, Contract Test Gate, PowerShell Manifest Validation Gate, Gitleaks Secret Scanning Gate, Security Test Gate, Static Analysis Gate, Unit Test Gate, CI validation pipeline
 
-### Community 7 - "Hybrid Analysis Transport"
-Cohesion: 0.25
-Nodes (4): Get-HaConnectionState(), Get-HaFileVerdict(), Invoke-EndpointOpsHttpRequest(), Invoke-HaRequest()
-
-### Community 8 - "EPM Elevation and State"
-Cohesion: 0.33
-Nodes (3): Get-VtConnectionState(), Get-EpmElevationEvent(), Get-EpmElevationSummary()
+### Community 8 - "Detection Workflows"
+Cohesion: 0.43
+Nodes (7): Detection backlog, W1 SentinelOne Fleet Hygiene, W2 EPM Events to Policy Proposals, W3 SentinelOne Exclusion Review, W4.7 machine/group unused-authorization review, W4.8 proposed rule-level usage inventory, W4 Device Control Review
 
 ## Knowledge Gaps
-- **15 isolated node(s):** `Static Analysis Gate`, `Unit Test Gate`, `Security Test Gate`, `Gitleaks Secret Scanning Gate`, `PowerShell Manifest Validation Gate` (+10 more)
+- **12 isolated node(s):** `Architecture knowledge graph`, `Typed HTTP exceptions debt`, `Versioned read-only rule snapshot`, `Static Analysis Gate`, `Unit Test Gate` (+7 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Get-PropertyOrDefault()` connect `Scoring and EPM Requests` to `SentinelOne Observation Flow`, `Cache and Shared Requests`, `VirusTotal Client Flow`, `Hybrid Analysis Transport`, `EPM Elevation and State`?**
-  _High betweenness centrality (0.099) - this node is a cross-community bridge._
-- **Why does `Invoke-EndpointOpsRequest()` connect `Cache and Shared Requests` to `Scoring and EPM Requests`, `SentinelOne Observation Flow`, `VirusTotal Client Flow`, `Hybrid Analysis Transport`?**
-  _High betweenness centrality (0.038) - this node is a cross-community bridge._
-- **Why does `Get-FileReputation()` connect `Cache and Shared Requests` to `EPM Elevation and State`, `VirusTotal Client Flow`, `Hybrid Analysis Transport`?**
-  _High betweenness centrality (0.028) - this node is a cross-community bridge._
-- **Are the 18 inferred relationships involving `Get-PropertyOrDefault()` (e.g. with `ConvertTo-EpmSet()` and `Get-EpmNextCursor()`) actually correct?**
-  _`Get-PropertyOrDefault()` has 18 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 9 inferred relationships involving `Invoke-EpmRequest()` (e.g. with `Get-EpmConnectionState()` and `Get-EpmNextCursor()`) actually correct?**
-  _`Invoke-EpmRequest()` has 9 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `Invoke-EndpointOpsRequest()` connect `Reputation Provider Requests` to `EPM Scoring and Requests`, `SentinelOne Observation Flow`, `HTTP Transport and Hybrid Analysis`?**
+  _High betweenness centrality (0.042) - this node is a cross-community bridge._
+- **Why does `Get-PropertyOrDefault()` connect `EPM Scoring and Requests` to `SentinelOne Observation Flow`, `HTTP Transport and Hybrid Analysis`?**
+  _High betweenness centrality (0.040) - this node is a cross-community bridge._
+- **Why does `Invoke-S1Request()` connect `SentinelOne Observation Flow` to `EPM Scoring and Requests`, `Reputation Provider Requests`?**
+  _High betweenness centrality (0.031) - this node is a cross-community bridge._
+- **Are the 14 inferred relationships involving `Get-PropertyOrDefault()` (e.g. with `ConvertTo-EpmSet()` and `Get-EpmNextCursor()`) actually correct?**
+  _`Get-PropertyOrDefault()` has 14 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 8 inferred relationships involving `Invoke-S1Request()` (e.g. with `Get-S1ConnectionState()` and `Invoke-EndpointOpsRequest()`) actually correct?**
   _`Invoke-S1Request()` has 8 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Static Analysis Gate`, `Unit Test Gate`, `Security Test Gate` to the rest of the system?**
-  _15 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Are the 7 inferred relationships involving `Invoke-EndpointOpsRequest()` (e.g. with `Get-TfFileVerdict()` and `Invoke-EpmRequest()`) actually correct?**
+  _`Invoke-EndpointOpsRequest()` has 7 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `Architecture knowledge graph`, `Typed HTTP exceptions debt`, `Versioned read-only rule snapshot` to the rest of the system?**
+  _12 weakly-connected nodes found - possible documentation gaps or missing edges._
