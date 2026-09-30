@@ -20,6 +20,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Assert PowerShell 7.6 runtime
+        shell: pwsh
+        run: |
+          Write-Host "PowerShell $($PSVersionTable.PSVersion)"
+          if ($PSVersionTable.PSVersion.Major -ne 7 -or
+              $PSVersionTable.PSVersion.Minor -ne 6) {
+              throw 'CI requires PowerShell 7.6.x.'
+          }
+
       - name: Install tooling
         shell: pwsh
         run: |
@@ -95,3 +104,36 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Test-ModuleManifest -Path ./src/EndpointOps/EndpointOps.psd1
+
+  windows-acl:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Assert native Windows and PowerShell 7.6
+        shell: pwsh
+        run: |
+          Write-Host "PowerShell $($PSVersionTable.PSVersion) on $([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
+          if (-not $IsWindows) { throw 'The ACL test requires native Windows.' }
+          if ($PSVersionTable.PSVersion.Major -ne 7 -or
+              $PSVersionTable.PSVersion.Minor -ne 6) {
+              throw 'CI requires PowerShell 7.6.x.'
+          }
+
+      - name: Install Pester 6.0.1
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -RequiredVersion 6.0.1 -Force -Scope CurrentUser
+          Import-Module Pester -RequiredVersion 6.0.1 -ErrorAction Stop
+
+      - name: Validate cache ACL preservation
+        shell: pwsh
+        run: |
+          $r = Invoke-Pester -Path ./tests/unit/ReputationCacheFile.Tests.ps1 `
+              -FullNameFilter '*existing Windows cache*' -Output Detailed -PassThru
+          $selectedCount = $r.TotalCount - $r.NotRunCount
+          if ($r.Result -ne 'Passed' -or $r.FailedContainersCount -ne 0 -or
+              $selectedCount -ne 2 -or $r.PassedCount -ne 2 -or $r.SkippedCount -ne 0) {
+              throw "Windows ACL validation failed: result=$($r.Result), selected=$selectedCount, passed=$($r.PassedCount), skipped=$($r.SkippedCount), failedContainers=$($r.FailedContainersCount)"
+          }
