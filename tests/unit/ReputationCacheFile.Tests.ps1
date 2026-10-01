@@ -159,6 +159,55 @@ Describe 'Persistent cache atomic file replacement' {
         (Get-Content -LiteralPath $destinationPath -Raw) | Should -BeExactly 'old'
         (Test-Path -LiteralPath "$sourcePath.backup") | Should -BeFalse
     }
+
+    It 'retains an existing Windows cache backup when the full writer cannot restore it' -Skip:(-not $IsWindows) {
+        $cachePath = Join-Path $TestDrive 'failed-restoration.json'
+        [IO.File]::WriteAllText($cachePath, 'old')
+        $restrictedAcl = Get-Acl -LiteralPath $cachePath
+        $restrictedAcl.SetAccessRuleProtection($true, $false)
+        foreach ($rule in @($restrictedAcl.Access)) {
+            $restrictedAcl.RemoveAccessRuleAll($rule)
+        }
+        $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $restrictedAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+                $currentUser, [Security.AccessControl.FileSystemRights]::FullControl,
+                [Security.AccessControl.AccessControlType]::Allow))
+        Set-Acl -LiteralPath $cachePath -AclObject $restrictedAcl
+        $originalSddl = (Get-Acl -LiteralPath $cachePath).Sddl
+
+        Mock Invoke-ReputationCacheReplace -ModuleName EndpointOps {
+            param($SourcePath, $DestinationPath, $BackupPath)
+            if (-not [IO.File]::Exists($SourcePath)) {
+                throw 'injected replacement reached without a staged source'
+            }
+            [IO.File]::Move($DestinationPath, $BackupPath)
+            [IO.Directory]::CreateDirectory($DestinationPath) | Out-Null
+            throw 'injected partial replacement failure'
+        }
+
+        $result = & (Get-Module EndpointOps) {
+            param($Path)
+            $warnings = @()
+            $failure = $null
+            try {
+                Write-ReputationCacheFile -CachePath $Path `
+                    -Entries @([pscustomobject]@{ Value = 'replacement' }) `
+                    -WarningVariable warnings
+            }
+            catch { $failure = $_ }
+            [pscustomobject]@{ Failure = $failure; Warnings = @($warnings) }
+        } $cachePath
+
+        $result.Failure | Should -Not -BeNullOrEmpty
+        $result.Failure.ScriptStackTrace | Should -Match 'Move-ReputationCacheFile'
+        @($result.Warnings).Count | Should -Be 1
+        $result.Warnings[0].ToString() | Should -Match 'cache restoration failed'
+        $backups = @(Get-ChildItem -LiteralPath $TestDrive -Recurse -File -Filter 'cache.backup')
+        $backups.Count | Should -Be 1
+        (Get-Content -LiteralPath $backups[0].FullName -Raw) | Should -BeExactly 'old'
+        (Get-Acl -LiteralPath $backups[0].FullName).Sddl | Should -BeExactly $originalSddl
+        (Test-Path -LiteralPath $cachePath -PathType Leaf) | Should -BeFalse
+    }
 }
 
 Describe 'Strict cache file recognition' {
