@@ -50,6 +50,8 @@ Its result is a three-state question:
 
 The report requires `RetentionDays` and explicit `-ControlSkuAvailable`. It rejects `AlertAfterDays -ge RemoveAfterDays`; an alert and removal workflow must be a genuine progression.
 
+Optional group-move history is not implemented. The [2026-10-01 research checkpoint](api-notes.md#group-membership-history) did not find an authoritative numeric activity-type mapping in the official public material reviewed. Its read-only validation requirements are attached to [#11](https://github.com/mbart75/endpoint-ops/issues/11), rather than maintained as an independent implementation task. W4.7 remains unchanged; current group membership is not a substitute for historical membership.
+
 ### W4.8 — rule-level usage inventory (roadmap)
 
 The planned [Device Control rule-usage inventory](device-control-rule-usage-roadmap.md) adds a separate, read-only view across eligible endpoints. It will make tenant-wide events sortable by rule, device identifiers, endpoint, scope, date, and allowed/blocked outcome while preserving W4.7 unchanged.

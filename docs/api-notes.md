@@ -67,7 +67,11 @@ Third-party integration schemas expose an event `ruleId`, but the repository has
 
 ### Group-membership history
 
-Third-party sources corroborate an activities endpoint, but no public source maps activity-type numbers to “agent moved between groups.” The code therefore does not invent that mapping. A real tenant or authenticated API Hub documentation is required before using that signal.
+Third-party sources corroborate an activities endpoint, but no authoritative public source reviewed establishes the activity-type mapping for “agent moved between groups.” The code therefore does not invent that mapping. A real tenant or authenticated API Hub documentation is required before using that signal.
+
+**Research checkpoint, 2026-10-01:** a repeat search restricted to SentinelOne-owned public material did not establish an authoritative numeric mapping. Queries covered `activityTypes`, `activity type` with `group`, and `agent moved` with group/API terms; unrelated vulnerability-database results were excluded. This bounded negative result is not proof that the mapping does not exist. The [official SentinelOne FAQ](https://www.sentinelone.com/faq/) directs authoritative API documentation to `Help -> API Hub` in the authenticated console.
+
+Optional W4.7 group-history enrichment is tracked under the existing [tenant-contract validation issue #11](https://github.com/mbart75/endpoint-ops/issues/11), not as a separate implementable debt. Before using it, validate the version-specific activity type, agent identity, old/new group semantics, event timestamp, attribution availability, pagination, retention and incomplete-history behavior from authorized read-only evidence. Record sanitized schema metadata and provenance only. Do not infer past scope from current membership, fabricate an activity type, or change W4.7 based on this search. The rule-level inventory in #12 still requires the independently reviewed contract.
 
 ### Retention is an input
 
