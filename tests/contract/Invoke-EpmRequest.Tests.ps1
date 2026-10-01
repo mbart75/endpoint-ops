@@ -26,6 +26,7 @@ BeforeAll {
     # in tests focused on transport and pagination behavior.
     $root = Join-Path $PSScriptRoot '..' '..' 'src' 'EndpointOps'
     . (Join-Path $root 'Private' 'Get-PropertyOrDefault.ps1')
+    . (Join-Path $root 'Private' 'Get-HttpStatusFromError.ps1')
     . (Join-Path $root 'Private' 'Invoke-EndpointOpsHttpRequest.ps1')
     . (Join-Path $root 'Public'  'Invoke-EndpointOpsRequest.ps1')
     . (Join-Path $root 'Private' 'Get-EpmNextCursor.ps1')
@@ -342,6 +343,42 @@ Describe 'Invoke-EpmRequest' {
     }
 
     Context 'Expired session' {
+
+        It 'Preserves the native 401 status after adding reconnection guidance' {
+            $caught = $null
+            try { Invoke-EpmRequest -Path '/EPM/API/_test/expired' | Out-Null }
+            catch { $caught = $_ }
+            $caught | Should -Not -BeNullOrEmpty
+            $caught.Exception | Should -BeOfType ([System.Net.Http.HttpRequestException])
+            [int]$caught.Exception.StatusCode | Should -Be 401
+            $caught.Exception.InnerException | Should -BeNullOrEmpty
+        }
+
+        It 'Does not treat a 404 path containing 401 as an expired session' {
+            $caught = $null
+            try { Invoke-EpmRequest -Path '/EPM/API/_test/401/not-found' | Out-Null }
+            catch { $caught = $_ }
+            $caught | Should -Not -BeNullOrEmpty
+            $caught.Exception | Should -BeOfType ([System.Net.Http.HttpRequestException])
+            [int]$caught.Exception.StatusCode | Should -Be 404
+            $caught.Exception.Message | Should -Not -BeLike '*session*expire*'
+        }
+
+        It 'Recognizes a typed 401 without a numeric status in its message' {
+            Mock Invoke-EndpointOpsRequest {
+                throw [System.Net.Http.HttpRequestException]::new('Authentication rejected', $null, [System.Net.HttpStatusCode]::Unauthorized)
+            }
+            { Invoke-EpmRequest -Path '/EPM/API/Sets' } | Should -Throw -ExpectedMessage '*Connect-EpmTenant*'
+        }
+
+        It 'Does not classify an untyped error mentioning 401 as session expiry' {
+            Mock Invoke-EndpointOpsRequest { throw [System.Exception]::new('Network interruption on /401/') }
+            $caught = $null
+            try { Invoke-EpmRequest -Path '/EPM/API/Sets' | Out-Null }
+            catch { $caught = $_ }
+            $caught | Should -Not -BeNullOrEmpty
+            $caught.Exception.Message | Should -BeExactly 'Network interruption on /401/'
+        }
 
         It 'Throws an error indicating that the session has expired' {
             { Invoke-EpmRequest -Path '/EPM/API/_test/expired' } |

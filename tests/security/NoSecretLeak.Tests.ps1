@@ -13,6 +13,27 @@ AfterAll {
 }
 
 Describe 'Non-disclosure of the token' {
+    It 'Does not attach raw headers or response content to a typed HTTP failure' {
+        InModuleScope EndpointOps -Parameters @{ TestToken = $script:TokenValue } {
+            param($TestToken)
+            Mock Invoke-WebRequest {
+                [pscustomobject]@{ StatusCode = 401; Content = $TestToken; Headers = @{ Authorization = $TestToken } }
+            }
+            $caught = $null
+            try {
+                Invoke-EndpointOpsRequest -Uri 'http://localhost/health' -Headers @{ Authorization = $TestToken } -Body $TestToken -MaxAttempts 1 | Out-Null
+            }
+            catch { $caught = $_ }
+            $caught | Should -Not -BeNullOrEmpty
+            $caught.Exception | Should -BeOfType ([System.Net.Http.HttpRequestException])
+            [int]$caught.Exception.StatusCode | Should -Be 401
+            $caught.Exception.InnerException | Should -BeNullOrEmpty
+            $caught.Exception.Data.Count | Should -Be 0
+            $caught.Exception.ToString() | Should -Not -Match ([regex]::Escape($TestToken))
+            ($caught.Exception | ConvertTo-Json -Depth 8) | Should -Not -Match ([regex]::Escape($TestToken))
+        }
+    }
+
     It 'Does not expose the token in the verbose stream' {
         $verbose = Invoke-EndpointOpsRequest -Uri "$($script:Server.BaseUrl)/health" `
             -Headers @{ Authorization = $script:Token } -Verbose 4>&1 |

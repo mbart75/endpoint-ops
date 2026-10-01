@@ -64,7 +64,11 @@ function Invoke-EndpointOpsHttpRequest {
         $retryable = ($status -eq 429) -or ($status -ge 500)
 
         if (-not $retryable -or $attempt -eq $MaxAttempts) {
-            throw "EndpointOps: $Method $Uri returned $status after $attempt attempt(s)"
+            # Keep machine-readable status without retaining the raw response, headers or body.
+            throw [System.Net.Http.HttpRequestException]::new(
+                "EndpointOps: $Method $Uri returned $status after $attempt attempt(s)",
+                $null,
+                [System.Net.HttpStatusCode]$status)
         }
 
         $wait = if ($status -eq 429 -and $response.Headers['Retry-After']) {

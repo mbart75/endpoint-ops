@@ -61,8 +61,11 @@ function Get-EpmPolicyDetail {
         catch {
             # EPM uses 404 for an unknown policy, an invalid set identifier, and insufficient
             # permissions. Preserve that ambiguity instead of reporting a false absence.
-            if ($_.Exception.Message -match '\b404\b') {
-                throw "EndpointOps: 404 response for policy $PolicyId in set $SetId. EPM uses this code for an unknown policy, an incorrect set identifier, or insufficient account permissions. Do not conclude that the policy is absent."
+            if ((Get-HttpStatusFromError -Exception $_.Exception) -eq 404) {
+                throw [System.Net.Http.HttpRequestException]::new(
+                    "EndpointOps: 404 response for policy $PolicyId in set $SetId. EPM uses this code for an unknown policy, an incorrect set identifier, or insufficient account permissions. Do not conclude that the policy is absent.",
+                    $null,
+                    [System.Net.HttpStatusCode]::NotFound)
             }
             throw
         }
