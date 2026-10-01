@@ -97,11 +97,11 @@ function Invoke-EpmRequest {
             # A 401 generally means that the EPM session expired; token lifetime depends on tenant
             # configuration. Rephrase the error without exposing the token and explain the one-minute
             # connection limit so callers do not retry immediately.
-            #
-            # The transport layer does not expose a typed status-code exception, so this fallback
-            # extracts the status from its sanitized message.
-            if ($_.Exception.Message -match '\b401\b') {
-                throw "EndpointOps: the CyberArk EPM session has expired (401) on $Path. Please reconnect with Connect-EpmTenant. Note, CyberArk only allows one connection per minute and per user: if you have just logged in, wait a minute before trying again."
+            if ((Get-HttpStatusFromError -Exception $_.Exception) -eq 401) {
+                throw [System.Net.Http.HttpRequestException]::new(
+                    "EndpointOps: the CyberArk EPM session has expired (401) on $Path. Please reconnect with Connect-EpmTenant. Note, CyberArk only allows one connection per minute and per user: if you have just logged in, wait a minute before trying again.",
+                    $null,
+                    [System.Net.HttpStatusCode]::Unauthorized)
             }
             throw
         }

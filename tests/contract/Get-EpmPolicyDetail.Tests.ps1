@@ -100,6 +100,46 @@ Describe 'Get-EpmPolicyDetail' {
 
     Context 'Unknown policy' {
 
+        It 'Preserves a typed 404 when explaining its permissions ambiguity' {
+            $caught = $null
+            try {
+                Get-EpmPolicyDetail -SetId $script:Production -PolicyId '00000000-0000-0000-0000-000000000099' -MinIntervalMs 0 | Out-Null
+            }
+            catch { $caught = $_ }
+            $caught | Should -Not -BeNullOrEmpty
+            $caught.Exception | Should -BeOfType ([System.Net.Http.HttpRequestException])
+            [int]$caught.Exception.StatusCode | Should -Be 404
+            $caught.Exception.InnerException | Should -BeNullOrEmpty
+        }
+
+        It 'Explains a typed 404 even without a numeric status in the message' {
+            InModuleScope EndpointOps {
+                Mock Invoke-EpmRequest {
+                    throw [System.Net.Http.HttpRequestException]::new('Request rejected', $null, [System.Net.HttpStatusCode]::NotFound)
+                }
+                { Get-EpmPolicyDetail -SetId '11111111-1111-1111-1111-111111111111' -PolicyId '00000000-0000-0000-0000-000000000099' -MinIntervalMs 0 } |
+                    Should -Throw -ExpectedMessage '*insufficient account permissions*'
+            }
+        }
+
+        It 'Does not reinterpret another status or a network failure containing 404' -ForEach @(
+            @{ Status = 500 }; @{ Status = $null }
+        ) {
+            InModuleScope EndpointOps -Parameters @{ Status = $Status } {
+                param($Status)
+                $failure = if ($null -eq $Status) { [System.Exception]::new('Failure on /404/') }
+                else { [System.Net.Http.HttpRequestException]::new('Failure on /404/', $null, [System.Net.HttpStatusCode]$Status) }
+                Mock Invoke-EpmRequest { throw $failure }
+                $caught = $null
+                try {
+                    Get-EpmPolicyDetail -SetId '11111111-1111-1111-1111-111111111111' -PolicyId '00000000-0000-0000-0000-000000000099' -MinIntervalMs 0 | Out-Null
+                }
+                catch { $caught = $_ }
+                $caught | Should -Not -BeNullOrEmpty
+                [object]::ReferenceEquals($caught.Exception, $failure) | Should -BeTrue
+            }
+        }
+
         It 'Throws for an unknown policy identifier' {
             { Get-EpmPolicyDetail -SetId $script:Production `
                     -PolicyId '00000000-0000-0000-0000-000000000099' -MinIntervalMs 0 } |

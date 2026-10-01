@@ -4,36 +4,35 @@ Set-StrictMode -Version 3.0
 
 BeforeAll {
     $functionPath = Join-Path $PSScriptRoot '..' '..' 'src' 'EndpointOps' 'Private' 'Get-HttpStatusFromError.ps1'
-    if (Test-Path -LiteralPath $functionPath) {
-        . $functionPath
-    }
+    . $functionPath
 }
 
 Describe 'Get-HttpStatusFromError' {
-    It 'Extracts the 404 status after the transport anchor' {
-        Get-HttpStatusFromError -Message 'EndpointOps: GET https://example.test/a returned 404 after 1 attempt(s)' |
-            Should -Be 404
+    It 'Uses native status <Status>, not the misleading message' -ForEach @(
+        @{ Status = 400 }; @{ Status = 401 }; @{ Status = 404 }; @{ Status = 429 }; @{ Status = 500 }
+    ) {
+        $errorException = [System.Net.Http.HttpRequestException]::new(
+            'Misleading text: returned 503 on /401/', $null, [System.Net.HttpStatusCode]$Status)
+        Get-HttpStatusFromError -Exception $errorException | Should -Be $Status
     }
 
-    It 'Extracts the status 429 after the transport marker' {
-        Get-HttpStatusFromError -Message 'EndpointOps: GET https://example.test/a returned 429 after 1 attempt(s)' |
-            Should -Be 429
+    It 'Unwraps a generic exception to the first native HTTP exception' {
+        $httpError = [System.Net.Http.HttpRequestException]::new('No status in text', $null, [System.Net.HttpStatusCode]::NotFound)
+        $wrapper = [System.Exception]::new('returned 500', $httpError)
+        Get-HttpStatusFromError -Exception $wrapper | Should -Be 404
     }
 
-    It 'Extracts the status 500 after several attempts' {
-        Get-HttpStatusFromError -Message 'EndpointOps: GET https://example.test/a returned 500 after 4 attempt(s)' |
-            Should -Be 500
+    It 'Keeps the outer native status rather than a conflicting inner status' {
+        $inner = [System.Net.Http.HttpRequestException]::new('inner', $null, [System.Net.HttpStatusCode]::NotFound)
+        $outer = [System.Net.Http.HttpRequestException]::new('outer', $inner, [System.Net.HttpStatusCode]::InternalServerError)
+        Get-HttpStatusFromError -Exception $outer | Should -Be 500
     }
 
-    It 'Returns $null without throwing when the message has no status' {
-        { Get-HttpStatusFromError -Message 'EndpointOps: call interrupted by the network' } |
-            Should -Not -Throw
-        Get-HttpStatusFromError -Message 'EndpointOps: call interrupted by the network' |
-            Should -BeNullOrEmpty
-    }
-
-    It 'Ignores a 404 URL fragment and returns the actual status 200' {
-        Get-HttpStatusFromError -Message 'EndpointOps: GET https://example.test/api/404/file returned 200 after 1 attempt(s)' |
-            Should -Be 200
+    It 'Does not infer a status from text, null input or a null native status' {
+        $inner = [System.Net.Http.HttpRequestException]::new('inner', $null, [System.Net.HttpStatusCode]::NotFound)
+        $outer = [System.Net.Http.HttpRequestException]::new('returned 401', $inner, $null)
+        Get-HttpStatusFromError -Exception $outer | Should -BeNullOrEmpty
+        Get-HttpStatusFromError -Exception ([System.Exception]::new('returned 404')) | Should -BeNullOrEmpty
+        Get-HttpStatusFromError -Exception $null | Should -BeNullOrEmpty
     }
 }

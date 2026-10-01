@@ -210,7 +210,7 @@ Describe 'Get-VtFileReport' {
             Mock Invoke-VtRequest {
                 $script:VtUnknownCalls++
                 if ($script:VtUnknownCalls -eq 1) {
-                    throw 'EndpointOps: mock VirusTotal provider returned 404.'
+                    throw [System.Net.Http.HttpRequestException]::new('Synthetic provider absence', $null, [System.Net.HttpStatusCode]::NotFound)
                 }
                 [pscustomobject]@{
                     data = [pscustomobject]@{
