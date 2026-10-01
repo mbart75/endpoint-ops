@@ -1,19 +1,23 @@
 function Get-HttpStatusFromError {
     <#
     .SYNOPSIS
-        Extracts an HTTP status code from a transport error message.
+        Reads the status from the first native HTTP exception in an exception chain.
     .DESCRIPTION
-        The shared transport layer does not expose a typed status-code exception. This helper accepts
-        a three-digit code only after the word "returned" so it cannot mistake a number in a URL for
-        an HTTP status.
+        Generic wrappers are skipped. A native HTTP exception is authoritative even when its status
+        is null: an inner exception or a number in diagnostic text must not override it.
     #>
     [CmdletBinding()]
     [OutputType([int])]
     param(
-        [AllowNull()][AllowEmptyString()][string]$Message
+        [AllowNull()][System.Exception]$Exception
     )
 
-    if ($Message -match 'returned\s+(\d{3})\b') {
-        return [int]$Matches[1]
+    $current = $Exception
+    while ($null -ne $current) {
+        if ($current -is [System.Net.Http.HttpRequestException]) {
+            if ($null -ne $current.StatusCode) { return [int]$current.StatusCode }
+            return
+        }
+        $current = $current.InnerException
     }
 }

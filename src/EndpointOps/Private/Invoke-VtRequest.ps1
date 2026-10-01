@@ -72,7 +72,7 @@ function Invoke-VtRequest {
             return Invoke-EndpointOpsRequest @arguments
         }
         catch {
-            $status = Get-HttpStatusFromError -Message $_.Exception.Message
+            $status = Get-HttpStatusFromError -Exception $_.Exception
 
             if ($status -eq 500 -and $attempt -eq 1) {
                 continue

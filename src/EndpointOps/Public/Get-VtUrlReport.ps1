@@ -54,7 +54,7 @@ function Get-VtUrlReport {
             $response = Invoke-VtRequest -Path "/api/v3/urls/$urlId" -MinIntervalMs $MinIntervalMs
         }
         catch {
-            $status = Get-HttpStatusFromError -Message $_.Exception.Message
+            $status = Get-HttpStatusFromError -Exception $_.Exception
             $verdict = if ($status -in @(400, 404)) { 'Unknown' } else { 'Unavailable' }
 
             $report = [pscustomobject]@{
