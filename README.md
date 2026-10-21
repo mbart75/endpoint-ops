@@ -159,6 +159,8 @@ tests/mock/            Local mock HTTP server and fixtures
 docs/                  API research, detection backlog, and design decisions
 ```
 
+Contributors and coding agents should start with [AGENTS.md](AGENTS.md). Security issues are reported privately as described in [SECURITY.md](SECURITY.md).
+
 ## Technical decisions
 
 The implementation rationale, known trade-offs, and security constraints are documented in [technical decisions](docs/decisions.md). Supporting research is available in the [general API notes](docs/api-notes.md), [EPM API notes](docs/api-notes-epm.md), [reputation-service notes](docs/api-notes-reputation.md), and [Device Control rule-usage roadmap](docs/device-control-rule-usage-roadmap.md).
