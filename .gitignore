@@ -14,6 +14,11 @@
 # not necessarily secret, but it is not project documentation for a public repository.
 .claude/
 
+# Local Graphify map for coding agents (see AGENTS.md). It is regenerated on
+# demand and can absorb local agent notes from graphify-out/memory/, so it is
+# never published.
+graphify-out/
+
 # Test and build output
 testResults*.xml
 coverage*.xml
