@@ -14,12 +14,6 @@
 # not necessarily secret, but it is not project documentation for a public repository.
 .claude/
 
-# Personal working notes
-Transmission.md
-transmissions/
-NOTES-ENTRETIEN.md
-blueprint*.md
-
 # Test and build output
 testResults*.xml
 coverage*.xml
