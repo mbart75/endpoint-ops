@@ -19,7 +19,7 @@ tests/unit|contract|security/      Pester 6 suites
 tests/mock/MockApiServer.ps1       Local HttpListener mock of every product API
 docs/decisions.md                  Numbered design decisions (append, never renumber)
 docs/api-notes*.md                 API research with sources
-docs/superpowers/                  Versioned specs and plans of past work cycles
+docs/superpowers/                  Specs and plans of past work cycles; new ones stay local (git-ignored machine-wide)
 ```
 
 Four layers, each calling only the one below: workflows (`Get-*Report`, `Invoke-S1FleetRemediation`) → product queries (`Get-S1*`, `Get-Epm*`, `Get-Vt*`, `Get-FileReputation`) → connections (`Connect-*`/`Disconnect-*`) → transport (`Invoke-EndpointOpsRequest`). Product queries return observations; scoring and judgment live in workflows.
