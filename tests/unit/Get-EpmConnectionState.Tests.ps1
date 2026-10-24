@@ -25,8 +25,8 @@ Describe 'Get-EpmConnectionState' {
     Context 'With an active connection' {
         BeforeEach {
             $script:EpmConnection = [pscustomobject]@{
-                DispatcherUri = 'https://login.epm.cyberark.com/login'
-                ManagerUri    = 'https://eu123.epm.cyberark.com'
+                DispatcherUri = 'https://dispatcher.epm.example'
+                ManagerUri    = 'https://manager.epm.example'
                 Token         = ConvertTo-TestSecureString -PlainText 'MOCK-EPM-TOKEN'
                 ConnectedAt   = [datetime]'2026-07-27T10:00:00Z'
             }
@@ -41,13 +41,13 @@ Describe 'Get-EpmConnectionState' {
         }
 
         It 'Keeps the dispatcher used for authentication' {
-            (Get-EpmConnectionState).DispatcherUri | Should -Be 'https://login.epm.cyberark.com/login'
+            (Get-EpmConnectionState).DispatcherUri | Should -Be 'https://dispatcher.epm.example'
         }
 
         It 'Keeps the ManagerUri used by subsequent calls' {
             # This distinction is easy to miss: the two URLs differ and only the second
 # is used for business calls.
-            (Get-EpmConnectionState).ManagerUri | Should -Be 'https://eu123.epm.cyberark.com'
+            (Get-EpmConnectionState).ManagerUri | Should -Be 'https://manager.epm.example'
         }
 
         It 'Keeps the token in the form of a SecureString' {

@@ -83,7 +83,7 @@ Describe 'Non-disclosure of the token - SentinelOne surface' {
     }
 
     It 'Does not return the token from Connect-S1Tenant' {
-        $r = Connect-S1Tenant -BaseUri 'https://example.sentinelone.net' -ApiToken $script:S1Token -SkipValidation
+        $r = Connect-S1Tenant -BaseUri 'https://s1-tenant.example' -ApiToken $script:S1Token -SkipValidation
         ($r | Format-List | Out-String) | Should -Not -Match 'MOCK-S1-TOKEN'
         ($r | ConvertTo-Json -Depth 5) | Should -Not -Match 'MOCK-S1-TOKEN'
     }

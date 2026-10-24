@@ -19,7 +19,7 @@ function Connect-EpmTenant {
         connection per user per minute, so an immediate retry would hide the cause and likely fail.
     .EXAMPLE
         $credential = Get-Credential
-        Connect-EpmTenant -DispatcherUri 'https://login.epm.cyberark.com/login' -Credential $credential
+        Connect-EpmTenant -DispatcherUri 'https://login.epm.cyberark.com' -Credential $credential
     #>
     [CmdletBinding()]
     [OutputType([pscustomobject])]

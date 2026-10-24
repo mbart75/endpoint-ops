@@ -27,18 +27,21 @@ Layer 2  Connections        Connect-S1Tenant · Disconnect-S1Tenant
                              Connect-HybridAnalysis · Disconnect-HybridAnalysis
                                         |
 Layer 1  Transport          Invoke-EndpointOpsRequest
+
+Outside the layers          Get-EndpointOpsVersion (returns the module version)
 ```
 
 ## Capabilities
 
 | Area | Commands | Purpose |
 |---|---|---|
-| Shared transport | `Invoke-EndpointOpsRequest`, `Get-EndpointOpsVersion` | HTTP requests with retries, backoff, timeouts, and SentinelOne cursor pagination. Pagination and retry waits are bounded by caller-configurable local policy. |
+| Shared transport | `Invoke-EndpointOpsRequest` | HTTP requests with retries, backoff, timeouts, and SentinelOne cursor pagination. Pagination and retry waits are bounded by caller-configurable local policy. It is a generic client: it uses no stored connection, sends only the headers the caller supplies, accepts any HTTP method, and has no `ShouldProcess` guard. |
+| Module information | `Get-EndpointOpsVersion` | Returns the version of the imported module. |
 | SentinelOne connection and queries | `Connect-S1Tenant`, `Disconnect-S1Tenant`, `Get-S1Agent`, `Get-S1Exclusion`, `Get-S1DeviceControlRule`, `Get-S1DeviceControlEvent` | Retrieve endpoint, exclusion, and Device Control information. HTTPS is required except for local mock-server addresses. |
 | SentinelOne review workflows | `Get-S1FleetHygieneReport`, `Get-S1ExclusionRiskReport`, `Get-S1DeviceControlRiskReport`, `Get-S1UnusedAuthorizationReport` | Produce explainable findings for endpoint hygiene, broad exclusions, permissive device rules, and unused authorizations. |
-| SentinelOne remediation | `Invoke-S1FleetRemediation` | The module’s only remote product write command. It can only perform stage-one movement to a tracking group and uses `ShouldProcess`. |
+| SentinelOne remediation | `Invoke-S1FleetRemediation` | The module’s only command that writes to a product through a stored connection. It can only perform stage-one movement to a tracking group and uses `ShouldProcess`. |
 | CyberArk EPM | `Connect-EpmTenant`, `Disconnect-EpmTenant`, `Get-EpmSet`, `Get-EpmPolicy`, `Get-EpmPolicyDetail`, `Get-EpmElevationEvent`, `Get-EpmPolicyHygieneReport`, `Get-EpmElevationSummary` | Query EPM sets, policies, and elevation events, then surface policy-hygiene and elevation proposals. |
-| Reputation enrichment | `Connect-VirusTotal`, `Disconnect-VirusTotal`, `Get-VtFileReport`, `Get-VtUrlReport`, `Connect-MalwareBazaar`, `Disconnect-MalwareBazaar`, `Connect-HybridAnalysis`, `Disconnect-HybridAnalysis`, `Get-FileReputation`, `Clear-ReputationCache` | Optional hash-only file enrichment with ordered per-source evidence. URL lookup remains VirusTotal-specific. No file upload or automatic authorization exists. |
+| Reputation enrichment | `Connect-VirusTotal`, `Disconnect-VirusTotal`, `Get-VtFileReport`, `Get-VtUrlReport`, `Connect-MalwareBazaar`, `Disconnect-MalwareBazaar`, `Connect-HybridAnalysis`, `Disconnect-HybridAnalysis`, `Get-FileReputation`, `Clear-ReputationCache` | Optional hash-only file enrichment with ordered per-source evidence. URL lookup remains VirusTotal-specific. ThreatFox has no command of its own: it reuses the abuse.ch key held by `Connect-MalwareBazaar`, whose `-ThreatFoxBaseUri` sets its endpoint. No file upload or automatic authorization exists. |
 
 CyberArk EPM uses a dispatcher model: authentication returns both a session token and `ManagerURL`; subsequent EPM requests use that returned manager URL. EPM list pagination uses offsets, while event pagination uses an opaque cursor.
 
@@ -108,7 +111,7 @@ Disconnect-EpmTenant
 - Tokens remain in memory for the active session and are not written to disk. They are converted to plaintext only when an HTTP authorization header is constructed.
 - Verbose logging records header names, not header values. The HTTP transport disables the `Invoke-WebRequest` debug stream to prevent credentials from appearing in debug output.
 - The local mock server requires a token on product routes, while generic transport routes remain unauthenticated to isolate transport tests from authentication tests.
-- `Invoke-S1FleetRemediation` is the only remote product write command. It moves endpoints only to a specified tracking group, uses `SupportsShouldProcess`, sets `ConfirmImpact = 'High'`, and supports `-WhatIf`. Local cache clearing also uses `ShouldProcess`.
+- `Invoke-S1FleetRemediation` is the only command that writes to a product through a stored connection. It moves endpoints only to a specified tracking group, uses `SupportsShouldProcess`, sets `ConfirmImpact = 'High'`, and supports `-WhatIf`. Local cache clearing also uses `ShouldProcess`.
 - `-WhatIf` does not bypass connection validation: a disconnected module fails rather than claiming it would act.
 - Each reputation provider that is queried learns a file hash. ThreatFox receives the VirusTotal-derived SHA-256 pivot. VirusTotal URL lookups disclose a reversible base64url URL identifier. Enrichment is opt-in and never uploads file contents.
 
@@ -131,15 +134,15 @@ CI runs the following gates:
 | Canary | The mock API server starts and returns expected success, failure, and 404 responses before contract tests run. |
 | Contract tests | The HTTP client meets the assumed API contract for pagination, retries, timeouts, and rate limiting. |
 | Security tests | Tokens and passwords do not appear in verbose output, debug output, or error messages. |
-| Secret scanning | Gitleaks checks the Git history for committed secrets. |
+| Secret scanning | Gitleaks scans the commits of every pull request and of every push to `main` for secrets. |
 | Manifest validation | `EndpointOps.psd1` remains a valid PowerShell module manifest. |
-| Native Windows cache ACL | A separate Windows Server 2025 job runs the existing ACL-preservation test under verified PowerShell 7.6; a skipped or unselected test fails the job. |
+| Native Windows cache ACL | A separate Windows Server 2025 job runs the three existing-cache ACL-preservation tests under verified PowerShell 7.6; the job fails unless exactly those three tests run and pass. |
 
 ## Limitations
 
 - The project has been written against public documentation and a mock server only. No real SentinelOne or CyberArk EPM tenant and no real VirusTotal, MalwareBazaar, Hybrid Analysis, or ThreatFox account was used for validation. The repository contains no tenant data, tokens, or tenant addresses.
 - Several upstream behaviours remain ambiguous in public documentation, including some EPM field names and pagination endings. The module handles documented alternatives defensively, but a real tenant is required to resolve them.
-- EPM policy details are rate limited to 30 calls per minute and each policy description requires its own detail request. Reviewing 200 policies therefore takes more than seven minutes.
+- EPM policy APIs are documented at 30 calls per minute and each policy description requires its own detail request. `Get-EpmPolicyDetail` spaces detail requests 2,100 ms apart by default (about 28 per minute), so reviewing 200 policies takes about seven minutes.
 - The VirusTotal quota counter is in memory and applies only to the current process. It paces that session; it is not an authoritative daily-quota ledger.
 - The tested ThreatFox entry point and absence-status contract are represented by the local mock only and require confirmation against the real service.
 - SentinelOne retention is tenant-dependent. `Get-S1UnusedAuthorizationReport` requires `RetentionDays` rather than assuming a universal retention period.
