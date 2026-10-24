@@ -4,9 +4,9 @@ function Get-EpmPolicyDetail {
         Reads the details of an EPM policy, including its description.
     .DESCRIPTION
         The EPM policy APIs are capped at 30 calls per minute, and details are retrieved one policy at
-        a time. For a set of 200 policies, a complete retrieval therefore takes more than seven
-        minutes. This is an API constraint, and the function deliberately paces requests to remain
-        within it.
+        a time. The function deliberately paces requests to remain within that limit: at the default
+        MinIntervalMs of 2100, a complete retrieval for a set of 200 policies takes about seven
+        minutes (199 intervals of 2.1 seconds, plus the time of the requests themselves).
 
         Pacing is enforced here rather than in the request layer because each policy detail is a
         separate pipeline request, not another page of the same request.

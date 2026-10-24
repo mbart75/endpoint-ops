@@ -15,17 +15,17 @@ Describe 'Connect-S1Tenant' {
     }
 
     It 'Accepts an HTTPS console' {
-        $r = Connect-S1Tenant -BaseUri 'https://example.sentinelone.net' -ApiToken $script:Token -SkipValidation
-        $r.BaseUri | Should -Be 'https://example.sentinelone.net'
+        $r = Connect-S1Tenant -BaseUri 'https://s1-tenant.example' -ApiToken $script:Token -SkipValidation
+        $r.BaseUri | Should -Be 'https://s1-tenant.example'
     }
 
     It 'Removes the trailing slash' {
-        $r = Connect-S1Tenant -BaseUri 'https://example.sentinelone.net/' -ApiToken $script:Token -SkipValidation
-        $r.BaseUri | Should -Be 'https://example.sentinelone.net'
+        $r = Connect-S1Tenant -BaseUri 'https://s1-tenant.example/' -ApiToken $script:Token -SkipValidation
+        $r.BaseUri | Should -Be 'https://s1-tenant.example'
     }
 
     It 'Rejects an HTTP console that is not local' {
-        { Connect-S1Tenant -BaseUri 'http://example.sentinelone.net' -ApiToken $script:Token -SkipValidation } |
+        { Connect-S1Tenant -BaseUri 'http://s1-tenant.example' -ApiToken $script:Token -SkipValidation } |
             Should -Throw -ExpectedMessage '*HTTPS*'
     }
 
@@ -35,13 +35,13 @@ Describe 'Connect-S1Tenant' {
     }
 
     It 'Never returns the token' {
-        $r = Connect-S1Tenant -BaseUri 'https://example.sentinelone.net' -ApiToken $script:Token -SkipValidation
+        $r = Connect-S1Tenant -BaseUri 'https://s1-tenant.example' -ApiToken $script:Token -SkipValidation
         ($r | ConvertTo-Json -Depth 5) | Should -Not -Match 'MOCK-S1-TOKEN'
         $r.PSObject.Properties.Name | Should -Not -Contain 'ApiToken'
     }
 
     It 'Indicates that the connection has not been validated' {
-        $r = Connect-S1Tenant -BaseUri 'https://example.sentinelone.net' -ApiToken $script:Token -SkipValidation
+        $r = Connect-S1Tenant -BaseUri 'https://s1-tenant.example' -ApiToken $script:Token -SkipValidation
         $r.Validated | Should -BeFalse
     }
 }
@@ -55,12 +55,12 @@ Describe 'Disconnect-S1Tenant' {
     }
 
     It 'May be called twice in a row' {
-        Connect-S1Tenant -BaseUri 'https://example.sentinelone.net' -ApiToken $script:Token -SkipValidation | Out-Null
+        Connect-S1Tenant -BaseUri 'https://s1-tenant.example' -ApiToken $script:Token -SkipValidation | Out-Null
         { Disconnect-S1Tenant; Disconnect-S1Tenant } | Should -Not -Throw
     }
 
     It 'Allows the connection to be reopened after disconnection' {
-        Connect-S1Tenant -BaseUri 'https://example.sentinelone.net' -ApiToken $script:Token -SkipValidation | Out-Null
+        Connect-S1Tenant -BaseUri 'https://s1-tenant.example' -ApiToken $script:Token -SkipValidation | Out-Null
         Disconnect-S1Tenant
         $r = Connect-S1Tenant -BaseUri 'https://other.example.invalid' -ApiToken $script:Token -SkipValidation
         $r.BaseUri | Should -Be 'https://other.example.invalid'

@@ -19,7 +19,7 @@ tests/unit|contract|security/      Pester 6 suites
 tests/mock/MockApiServer.ps1       Local HttpListener mock of every product API
 docs/decisions.md                  Numbered design decisions (append, never renumber)
 docs/api-notes*.md                 API research with sources
-docs/superpowers/                  Specs and plans of past work cycles; new ones stay local (git-ignored machine-wide)
+docs/superpowers/                  Specs and plans of past work cycles; new ones stay local and are never committed (the repository's `.gitignore` does not exclude them)
 ```
 
 Four layers, each calling only the one below: workflows (`Get-*Report`, `Invoke-S1FleetRemediation`) → product queries (`Get-S1*`, `Get-Epm*`, `Get-Vt*`, `Get-FileReputation`) → connections (`Connect-*`/`Disconnect-*`) → transport (`Invoke-EndpointOpsRequest`). Product queries return observations; scoring and judgment live in workflows.
@@ -42,7 +42,7 @@ On macOS and Linux three Windows-only ACL tests are skipped. A local skip is not
 
 - **Credentials.** Tokens and API keys stay in `SecureString` in memory, are converted to plaintext only to build an authorization header, and are never written to disk, logs, verbose or debug output, or error messages. Do not retain raw HTTP responses, headers, bodies, or inner exceptions to recover a status code: use `Get-HttpStatusFromError`. Security tests assert at the output sinks; keep them that way.
 - **Evidence semantics.** Absence of data is not absence of usage, `Unknown` is never safe, and reputation can only weaken or reject an EPM proposal, never authorize one.
-- **Writes.** `Invoke-S1FleetRemediation` is the only remote write command and only moves endpoints to a tracking group. Anything that writes uses `SupportsShouldProcess` and honours `-WhatIf` without skipping connection validation.
+- **Writes.** `Invoke-S1FleetRemediation` is the only command that writes to a product through a stored connection and only moves endpoints to a tracking group. Anything that writes uses `SupportsShouldProcess` and honours `-WhatIf` without skipping connection validation.
 - **Public surface.** Adding or removing a file in `Public/` requires the same change in `FunctionsToExport`; `tests/unit/Module.Tests.ps1` enforces it.
 - **Tests first.** A fix starts with a test that fails for the right reason. Prefer the mock server over function mocks for anything that crosses HTTP. Control time through the private clock helpers rather than waiting for the wall clock.
 - **Decisions.** A non-obvious trade-off gets a new numbered entry in `docs/decisions.md`.
