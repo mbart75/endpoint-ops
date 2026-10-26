@@ -5,6 +5,7 @@ BeforeAll {
     . (Join-Path $PSScriptRoot '..' 'helpers' 'ConvertTo-TestSecureString.ps1')
     Remove-Module EndpointOps -Force -ErrorAction SilentlyContinue
     Import-Module (Join-Path $PSScriptRoot '..' '..' 'src' 'EndpointOps' 'EndpointOps.psd1') -Force -ErrorAction Stop
+    . (Join-Path $PSScriptRoot '..' 'helpers' 'Invoke-PrivateTransport.ps1')
     $script:Server = Start-MockApiServer
     $script:VtKey = ConvertTo-TestSecureString -PlainText 'MOCK-VT-KEY'
 }

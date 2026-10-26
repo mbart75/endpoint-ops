@@ -38,7 +38,6 @@
         'Get-S1UnusedAuthorizationReport',
         'Get-VtFileReport',
         'Get-VtUrlReport',
-        'Invoke-EndpointOpsRequest',
         'Invoke-S1FleetRemediation'
     )
     CmdletsToExport      = @()
