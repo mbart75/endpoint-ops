@@ -4,6 +4,9 @@ function Invoke-EndpointOpsRequest {
         Entry point for module transport.
     .DESCRIPTION
         Execute a query and return the deserialized object.
+
+        Private by design: this generic client accepts any HTTP method and URI and has no
+        ShouldProcess guard, so exporting it would add an unguarded write path (decision 63).
     #>
     [CmdletBinding()]
     param(

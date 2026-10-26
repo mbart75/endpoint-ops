@@ -2,6 +2,7 @@ BeforeAll {
     . (Join-Path $PSScriptRoot '..' 'mock' 'MockApiServer.ps1')
     Remove-Module EndpointOps -Force -ErrorAction SilentlyContinue
     Import-Module (Join-Path $PSScriptRoot '..' '..' 'src' 'EndpointOps' 'EndpointOps.psd1') -Force -ErrorAction Stop
+    . (Join-Path $PSScriptRoot '..' 'helpers' 'Invoke-PrivateTransport.ps1')
     $script:Server = Start-MockApiServer
     $script:TokenValue = 'TOKEN-WHO-NEVER-SHOULD-APPEAR'
     $script:Token = "ApiToken $($script:TokenValue)"

@@ -28,7 +28,7 @@ BeforeAll {
     . (Join-Path $root 'Private' 'Get-PropertyOrDefault.ps1')
     . (Join-Path $root 'Private' 'Get-HttpStatusFromError.ps1')
     . (Join-Path $root 'Private' 'Invoke-EndpointOpsHttpRequest.ps1')
-    . (Join-Path $root 'Public'  'Invoke-EndpointOpsRequest.ps1')
+    . (Join-Path $root 'Private' 'Invoke-EndpointOpsRequest.ps1')
     . (Join-Path $root 'Private' 'Get-EpmNextCursor.ps1')
     . (Join-Path $root 'Private' 'Get-EpmConnectionState.ps1')
     . (Join-Path $root 'Private' 'Invoke-EpmRequest.ps1')

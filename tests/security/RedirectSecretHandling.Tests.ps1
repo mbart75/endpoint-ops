@@ -7,6 +7,7 @@ BeforeAll {
 
     Remove-Module EndpointOps -Force -ErrorAction SilentlyContinue
     Import-Module (Join-Path $PSScriptRoot '..' '..' 'src' 'EndpointOps' 'EndpointOps.psd1') -Force -ErrorAction Stop
+    . (Join-Path $PSScriptRoot '..' 'helpers' 'Invoke-PrivateTransport.ps1')
 
     $script:RedirectOrigin = Start-MockApiServer
     $script:TargetOrigin = Start-MockApiServer

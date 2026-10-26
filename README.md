@@ -26,7 +26,7 @@ Layer 2  Connections        Connect-S1Tenant · Disconnect-S1Tenant
                              Connect-MalwareBazaar · Disconnect-MalwareBazaar
                              Connect-HybridAnalysis · Disconnect-HybridAnalysis
                                         |
-Layer 1  Transport          Invoke-EndpointOpsRequest
+Layer 1  Transport          Invoke-EndpointOpsRequest (private)
 
 Outside the layers          Get-EndpointOpsVersion (returns the module version)
 ```
@@ -35,13 +35,14 @@ Outside the layers          Get-EndpointOpsVersion (returns the module version)
 
 | Area | Commands | Purpose |
 |---|---|---|
-| Shared transport | `Invoke-EndpointOpsRequest` | HTTP requests with retries, backoff, timeouts, and SentinelOne cursor pagination. Pagination and retry waits are bounded by caller-configurable local policy. It is a generic client: it uses no stored connection, sends only the headers the caller supplies, accepts any HTTP method, and has no `ShouldProcess` guard. |
 | Module information | `Get-EndpointOpsVersion` | Returns the version of the imported module. |
 | SentinelOne connection and queries | `Connect-S1Tenant`, `Disconnect-S1Tenant`, `Get-S1Agent`, `Get-S1Exclusion`, `Get-S1DeviceControlRule`, `Get-S1DeviceControlEvent` | Retrieve endpoint, exclusion, and Device Control information. HTTPS is required except for local mock-server addresses. |
 | SentinelOne review workflows | `Get-S1FleetHygieneReport`, `Get-S1ExclusionRiskReport`, `Get-S1DeviceControlRiskReport`, `Get-S1UnusedAuthorizationReport` | Produce explainable findings for endpoint hygiene, broad exclusions, permissive device rules, and unused authorizations. |
 | SentinelOne remediation | `Invoke-S1FleetRemediation` | The module’s only command that writes to a product through a stored connection. It can only perform stage-one movement to a tracking group and uses `ShouldProcess`. |
 | CyberArk EPM | `Connect-EpmTenant`, `Disconnect-EpmTenant`, `Get-EpmSet`, `Get-EpmPolicy`, `Get-EpmPolicyDetail`, `Get-EpmElevationEvent`, `Get-EpmPolicyHygieneReport`, `Get-EpmElevationSummary` | Query EPM sets, policies, and elevation events, then surface policy-hygiene and elevation proposals. |
 | Reputation enrichment | `Connect-VirusTotal`, `Disconnect-VirusTotal`, `Get-VtFileReport`, `Get-VtUrlReport`, `Connect-MalwareBazaar`, `Disconnect-MalwareBazaar`, `Connect-HybridAnalysis`, `Disconnect-HybridAnalysis`, `Get-FileReputation`, `Clear-ReputationCache` | Optional hash-only file enrichment with ordered per-source evidence. URL lookup remains VirusTotal-specific. ThreatFox has no command of its own: it reuses the abuse.ch key held by `Connect-MalwareBazaar`, whose `-ThreatFoxBaseUri` sets its endpoint. No file upload or automatic authorization exists. |
+
+Every product command goes through a private transport, `Invoke-EndpointOpsRequest`, which handles retries, backoff, timeouts, and SentinelOne cursor pagination within caller-configurable local bounds. It is not exported: as a generic client that accepts any HTTP method and URI, it would otherwise be an unguarded write path.
 
 CyberArk EPM uses a dispatcher model: authentication returns both a session token and `ManagerURL`; subsequent EPM requests use that returned manager URL. EPM list pagination uses offsets, while event pagination uses an opaque cursor.
 

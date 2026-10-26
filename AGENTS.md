@@ -22,7 +22,7 @@ docs/api-notes*.md                 API research with sources
 docs/superpowers/                  Specs and plans of past work cycles; new ones stay local and are never committed (the repository's `.gitignore` does not exclude them)
 ```
 
-Four layers, each calling only the one below: workflows (`Get-*Report`, `Invoke-S1FleetRemediation`) → product queries (`Get-S1*`, `Get-Epm*`, `Get-Vt*`, `Get-FileReputation`) → connections (`Connect-*`/`Disconnect-*`) → transport (`Invoke-EndpointOpsRequest`). Product queries return observations; scoring and judgment live in workflows.
+Four layers, each calling only the one below: workflows (`Get-*Report`, `Invoke-S1FleetRemediation`) → product queries (`Get-S1*`, `Get-Epm*`, `Get-Vt*`, `Get-FileReputation`) → connections (`Connect-*`/`Disconnect-*`) → transport (private `Invoke-EndpointOpsRequest`, never exported). Product queries return observations; scoring and judgment live in workflows.
 
 ## Commands
 

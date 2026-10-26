@@ -25,6 +25,14 @@ Describe 'Module EndpointOps' {
         [version]$v | Should -Not -Be ([version]'0.0')
     }
 
+    It 'Keeps the generic transport private' {
+        # Invoke-EndpointOpsRequest accepts any method and URI without ShouldProcess. Exporting it
+        # would add an unguarded write path beside Invoke-S1FleetRemediation.
+        $script:Module.ExportedFunctions.Keys | Should -Not -Contain 'Invoke-EndpointOpsRequest'
+        Get-Command -Module 'EndpointOps' -Name 'Invoke-EndpointOpsRequest' -ErrorAction SilentlyContinue |
+            Should -BeNullOrEmpty
+    }
+
     It 'Keeps Public files, FunctionsToExport, and exported functions aligned' {
         $publicDir = Join-Path (Split-Path $script:ModulePath) 'Public'
         $fromFiles = @(Get-ChildItem $publicDir -Filter '*.ps1' | ForEach-Object BaseName | Sort-Object)
